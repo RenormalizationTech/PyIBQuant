@@ -6,6 +6,18 @@
 
 ---
 
+## Implementation checkpoint — 2026-10-15
+
+The initial IBKR-to-chart slice is implemented, with live bar updates and browser
+symbol/interval/history controls. The renderer is our own HTML Canvas code, with
+no TradingView library dependency. This remains a development prototype.
+
+The visualization goal has expanded to a daily charting workspace that can replace
+TradingView for frequent IBKR US stock/ETF usage. Deliver it incrementally; full
+parity is not a v0.1 requirement. [TODO.md](TODO.md) is the detailed visualization
+backlog. [HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where
+to resume. Later phases below remain plans, not implemented APIs.
+
 # 1. Vision
 
 PyIBQuant aims to provide a coherent Python environment for people who:
@@ -395,7 +407,6 @@ PyIBQuant/
 │
 ├── README.md
 ├── PROJECT_PLAN.md
-├── CONTRIBUTING.md
 ├── LICENSE
 ├── pyproject.toml
 ├── .gitignore
@@ -706,9 +717,10 @@ Potential research topics:
 
 PyIBQuant should provide browser-based interactive visualization.
 
-The goal is NOT to reproduce every TradingView feature.
-
-The goal is to provide visualization useful for quantitative research.
+The visualization direction is an independently designed daily charting workspace
+for IBKR stock/ETF traders, integrated with quantitative research. It should
+eventually replace TradingView for that workflow. Do not attempt full feature
+parity before useful releases; follow the milestones in [TODO.md](TODO.md).
 
 ## Market Chart
 
@@ -907,19 +919,19 @@ Real use cases should drive the abstraction.
 ### TODO
 
 - [ ] Create `PyIBQuant` GitHub repository
-- [ ] Choose MIT or Apache-2.0 license
-- [ ] Add IBKR non-affiliation disclaimer
-- [ ] Create `pyproject.toml`
-- [ ] Use `src/pyibquant/` package layout
-- [ ] Add `.gitignore`
-- [ ] Add `README.md`
-- [ ] Add `PROJECT_PLAN.md`
-- [ ] Add `CONTRIBUTING.md`
-- [ ] Configure `pytest`
-- [ ] Configure `ruff`
-- [ ] Configure type checking
+- [x] Choose license (Apache-2.0)
+- [x] Add IBKR non-affiliation disclaimer
+- [x] Create `pyproject.toml`
+- [x] Use `src/pyibquant/` package layout
+- [x] Add `.gitignore`
+- [x] Add `README.md`
+- [x] Add `PROJECT_PLAN.md`
+- [ ] Add `CONTRIBUTING.md` later, when contributor guidance is needed (deferred)
+- [x] Configure `pytest`
+- [x] Configure `ruff`
+- [x] Configure type checking
 - [ ] Configure GitHub Actions
-- [ ] Establish Python version policy
+- [x] Establish Python version policy
 - [ ] Verify no credentials or private information are committed
 
 ---
@@ -940,17 +952,17 @@ Python User
 
 ### TODO
 
-- [ ] IBKR connection manager
-- [ ] connection configuration
-- [ ] contract resolution
-- [ ] historical bar requests
-- [ ] live market-data requests
-- [ ] normalized timestamps
-- [ ] canonical bar representation
-- [ ] structured exceptions
+- [x] IBKR connection manager
+- [x] connection configuration
+- [x] contract resolution
+- [x] historical bar requests
+- [x] live bar updates via historical-data subscription (tick quotes remain future work)
+- [x] normalized timestamps
+- [x] canonical bar representation
+- [x] structured exceptions
 - [ ] basic reconnect handling
-- [ ] unit tests without requiring live IBKR
-- [ ] integration tests clearly separated from unit tests
+- [x] unit tests without requiring live IBKR
+- [x] integration tests clearly separated from unit tests
 
 ### Target API
 
@@ -984,15 +996,15 @@ Interactive Browser Chart
 
 ### TODO
 
-- [ ] candlestick chart
-- [ ] volume
-- [ ] zoom
-- [ ] pan
-- [ ] interval display
+- [x] candlestick chart
+- [x] volume
+- [x] zoom
+- [x] pan
+- [x] interval display
 - [ ] indicator overlays
 - [ ] signal markers
 
-Possible CLI:
+Implemented CLI:
 
 ```bash
 pyibquant chart AAPL

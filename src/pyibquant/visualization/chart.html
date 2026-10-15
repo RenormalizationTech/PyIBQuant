@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PyIBQuant · Market chart</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b1018; color: #e1e8f0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 22px 28px; border-bottom: 1px solid #263243; gap: 20px; flex-wrap: wrap; }
+    .brand { font-size: 12px; letter-spacing: .15em; color: #8ca0b9; }
+    h1 { margin: 8px 0 0; font-size: 26px; font-weight: 600; }
+    #meta, footer, #status { color: #8ca0b9; font-size: 12px; }
+    #meta { margin-left: 12px; font-weight: 400; }
+    button { background: #172232; color: #dce6f4; border: 1px solid #33445a; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #263b54; }
+    #chart-controls { padding: 16px 28px 0; }
+    #chart-controls fieldset { margin: 0; padding: 0; border: 0; display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+    #chart-controls label { display: grid; gap: 6px; font-size: 12px; color: #8ca0b9; }
+    input, select { background: #172232; color: #dce6f4; border: 1px solid #33445a; padding: 8px 10px; border-radius: 6px; font: inherit; }
+    #symbol-input { width: 115px; text-transform: uppercase; }
+    #duration-input { width: 95px; }
+    :disabled { opacity: .55; cursor: default; }
+    #controls-note { font-size: 12px; color: #8ca0b9; }
+    #status { padding: 14px 28px 0; }
+    #error { margin: 12px 28px; color: #ffc5a8; white-space: pre-wrap; font-size: 13px; }
+    #legend { min-height: 34px; padding: 12px 28px; font: 12px ui-monospace, monospace; color: #b9cce1; }
+    #chart { width: 100%; height: calc(100dvh - 245px); min-height: 350px; }
+    footer { padding: 14px 28px; line-height: 1.8; border-top: 1px solid #263243; }
+    #market-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+    #market-canvas:focus-visible { outline: 1px solid #6d9bc9; outline-offset: -2px; }
+    #legend { line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <header>
+    <div><div class="brand">PYIBQUANT / MARKET OBSERVATORY</div><h1><span id="symbol"></span><span id="meta"></span></h1></div>
+    <div><button id="fit">Fit data</button> <button id="latest">Latest</button></div>
+  </header>
+  <form id="chart-controls">
+    <fieldset id="selection-fields" disabled>
+      <label for="symbol-input">Symbol<input id="symbol-input" name="symbol" maxlength="32" required autocomplete="off" placeholder="AAPL"></label>
+      <label for="interval-input">Interval<select id="interval-input" name="interval">
+        <option value="30s">30 seconds</option><option value="1min">1 minute</option>
+        <option value="5min">5 minutes</option><option value="15min">15 minutes</option>
+        <option value="30min">30 minutes</option><option value="1h">1 hour</option><option value="1d">1 day</option>
+      </select></label>
+      <label for="duration-input">History<input id="duration-input" name="duration" maxlength="16" required placeholder="1 D" title="Examples: 1 D, 2 W, 6 M, 1 Y"></label>
+      <button id="load-chart" type="submit">Load chart</button>
+    </fieldset>
+    <p id="controls-note">Saved snapshot. To change markets, open the connected chart with pyibquant chart AAPL --live.</p>
+  </form>
+  <div id="status" role="status"></div><div id="error" role="alert" hidden></div>
+  <div id="legend"></div>
+  <div id="chart"><canvas id="market-canvas" tabindex="0" role="img"
+    aria-label="Candlestick and volume chart. Arrow keys pan; plus and minus zoom; Home fits data; End shows latest bars.">
+    Your browser needs Canvas support to display market charts.
+  </canvas></div>
+  <footer>
+    Scroll or pinch to zoom · Drag to pan · Crosshair for OHLCV · Double-click to fit<br>
+    Arrow keys to pan · + / − to zoom · Home to fit · End for latest · Intraday times in UTC
+  </footer>
+  <script id="chart-data" type="application/json">__CHART_DATA__</script>
+  <script>__CHART_SCRIPT__</script>
+</body>
+</html>
