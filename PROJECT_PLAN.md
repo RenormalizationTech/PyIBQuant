@@ -1504,7 +1504,8 @@ The following foundation is now also implemented:
   active connection are rejected. Disconnects end default handles; opt-in
   `reconnect=True` restores exact resolved contracts in empty generations with
   persistent gap history and new feed confirmation. Permission failures stay terminal.
-  Local recovery checks pass; live recovery verification is blocked by IBKR 10197.
+  Local and after-hours frozen recovery checks pass; confirmed-live recovery
+  verification awaits an open trading session.
 - `record_quotes()` samples on the caller's thread, preserves field receipt times
   and records unchanged observations. Versioned JSONL includes identity, sampling
   and feed provenance, a completion/error footer and integrity digest.
@@ -1516,7 +1517,8 @@ AAPL verification returned 41 chain groups and recorded 12 frozen observations,
 10 with bid/ask and 9 with model IV/delta. This verifies acquisition/recording,
 not an exchange tick archive or live trading-session coverage. Live capture and
 simulation were subsequently verified as recorded below. Quote reconnect is now
-implemented with local checks; chart bid/ask enrichment and historical imports remain planned.
+implemented with local and frozen TWS checks; chart bid/ask enrichment and historical
+imports remain planned.
 The user chose our collected recordings for the first backtest.
 
 `pyibquant.option_backtest.backtest_option()` is now a standard-library intraday
@@ -1535,14 +1537,20 @@ and exports exact input bytes, input-fingerprinted results/assumptions, strategy
 and fill/trade/skip/equity CSV logs without TWS/SDK/optional dependencies.
 Live intraday recordings and offline replay were verified on 2026-10-16; frozen
 AAPL data remains diagnostic replay input. Continue live fill/valuation checks
-and live reconnect verification after the competing-live-session error is resolved.
+and confirmed-live reconnect verification during an open trading session.
 An explicit `quote_age_basis="side_update"` policy now uses matching live size
 receipts at/after each side's price, without rewriting price timestamps. It retains
 post-signal causality, size/age/skew checks and the original strict default. Both
 live recordings produced a complete simulated round trip under that explicit
 policy, with some intermediate valuations/drawdown still unknown. New recording
 format version 2 retains gap/generation history and loads legacy version 1 inputs;
-the simulator rejects reconnect gaps. Exercise, assignment, overnight carry and
+the simulator rejects reconnect gaps. Exclusive sample-count rotation now writes
+independently checked segments and an atomic manifest. Prevalidated disk-backed
+single-file/set readers check full input integrity, cross-segment identity, ordering
+and gap history without retaining all samples. Frozen rotating capture/replay and
+own-socket recovery passed against TWS after hours. Individual rotation segments
+are not full-session simulator inputs. Closed-file resume, streaming simulation
+and exact multi-file simulation exports remain planned. Exercise, assignment, overnight carry and
 settlement remain outside this initial simulator.
 
 

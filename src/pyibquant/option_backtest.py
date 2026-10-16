@@ -258,6 +258,9 @@ def backtest_option(
     if slippage_bps >= 10000:
         raise ValueError('slippage_bps must be below 10000')
     metadata = recording.metadata()
+    if metadata['header'].get('rotation') is not None:
+        raise ValueError('A rotated segment is not a complete recording session; '
+                         'replay its recording-set manifest')
     instrument = metadata['header']['instrument']
     if instrument.get('asset_type') != 'option' or not instrument.get('instrument_id'):
         raise ValueError('Option replay requires a resolved option contract')

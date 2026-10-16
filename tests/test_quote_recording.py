@@ -166,15 +166,16 @@ def test_quality_keeps_frozen_data_distinct_from_fresh_executable_quotes(source,
 
 
 @pytest.mark.parametrize('selected', [False, True])
+@pytest.mark.parametrize('rotating', [False, True])
 def test_options_research_example_discovers_only_or_records_one_contract(
-    source, tmp_path, monkeypatch, selected,
+    source, tmp_path, monkeypatch, selected, rotating,
 ):
     import runpy
     from datetime import UTC, date, datetime
     from pathlib import Path
     from unittest.mock import MagicMock, Mock
 
-    from pyibquant import OptionChain, OptionChainGroup
+    from pyibquant import OptionChain, OptionChainGroup, QuoteRecordingSet
 
     stream, state, _ = source
     chain = OptionChain('DEMO', 123, 'USD', (
@@ -188,13 +189,20 @@ def test_options_research_example_discovers_only_or_records_one_contract(
     args = ['options_research', 'DEMO', '--output-dir', str(tmp_path), '--duration', '3']
     if selected:
         args.extend(['--expiry', '2026-11-20', '--strike', '100', '--right', 'C'])
+    if rotating:
+        args.extend(['--max-samples-per-file', '2'])
     monkeypatch.setattr('sys.argv', args)
     script = Path(__file__).resolve().parents[1] / 'examples' / 'options_research.py'
     runpy.run_path(str(script), run_name='__main__')
     assert len(list(tmp_path.glob('*/chain.json'))) == 1
     if selected:
-        path = next(tmp_path.glob('*/quotes.jsonl'))
-        assert len(QuoteRecording.load(path)) == 3
+        if rotating:
+            manifest = next(tmp_path.glob('*/recording/recording.json'))
+            with QuoteRecordingSet.open(manifest) as replay:
+                assert len(replay) == 3 and replay.complete
+        else:
+            path = next(tmp_path.glob('*/quotes.jsonl'))
+            assert len(QuoteRecording.load(path)) == 3
         assert stream.closed
         assert market.stream_quote.call_count == 1
     else:
@@ -290,3 +298,336 @@ def test_original_version_one_recordings_without_continuity_fields_still_load(so
     recording = QuoteRecording.load(path)
     assert recording.complete and recording.quality()['generation'] == 0
     assert not recording.quality()['gaps']
+
+
+def test_disk_reader_matches_loaded_metadata_quality_and_fingerprint(source, tmp_path):
+    stream, _, _ = source
+    path = record_quotes(stream, tmp_path/'single.jsonl', duration=3)
+    loaded = QuoteRecording.load(path)
+    with QuoteRecording.open(path) as replay:
+        assert replay.complete and len(replay) == len(loaded)
+        assert replay.metadata() == loaded.metadata()
+        assert replay.fingerprint() == loaded.fingerprint()
+        assert replay.quality() == loaded.quality()
+        assert list(replay.samples()) == list(loaded.samples())
+        assert list(replay.samples()) == list(loaded.samples())  # Rewind without cached rows.
+        iterator = replay.samples()
+        next(iterator)['quote']['generation'] = 999
+        assert len(list(iterator)) == 2  # Consumer edits cannot change parser state.
+        iterator = replay.samples()
+        next(iterator)
+        with pytest.raises(RuntimeError, match='iterator is active'):
+            next(replay.samples())
+        iterator.close()
+        assert len(list(replay.samples())) == 3
+    with pytest.raises(ValueError, match='closed'):
+        next(replay.samples())
+
+
+def test_disk_reader_validates_before_yielding_and_keeps_original_open_file(source, tmp_path):
+    stream, _, _ = source
+    path = record_quotes(stream, tmp_path/'single.jsonl', duration=3)
+    original = path.read_bytes()
+    with QuoteRecording.open(path) as replay:
+        replacement = tmp_path/'replacement.jsonl'
+        replacement.write_text('not a recording')
+        replacement.replace(path)
+        assert len(list(replay.samples())) == 3
+    with pytest.raises(ValueError):
+        QuoteRecording.open(path)
+    path.write_bytes(original)
+    replay = QuoteRecording.open(path)
+    try:
+        path.write_text(path.read_text().replace('"bid":100', '"bid":999'))
+        with pytest.raises(ValueError, match='integrity'):
+            list(replay.samples())
+    finally:
+        replay.close()
+
+
+def test_disk_reader_retains_partial_opt_in_and_rejects_corruption(source, tmp_path):
+    stream, _, _ = source
+    path = record_quotes(stream, tmp_path/'partial.jsonl', duration=2)
+    path.write_text(''.join(path.read_text().splitlines(keepends=True)[:-1]))
+    with pytest.raises(ValueError, match='Incomplete'):
+        QuoteRecording.open(path)
+    with QuoteRecording.open(path, allow_incomplete=True) as replay:
+        loaded = QuoteRecording.load(path, allow_incomplete=True)
+        assert not replay.complete and len(replay) == 2
+        assert replay.fingerprint() == loaded.fingerprint()
+
+
+@pytest.mark.parametrize('rotating', [False, True])
+def test_disk_reader_and_quality_do_not_keep_all_samples_in_memory(source, tmp_path, rotating):
+    import tracemalloc
+
+    from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+    stream, _, _ = source
+    if rotating:
+        path = record_quotes_rotating(stream, tmp_path/'set', duration=2000, max_samples=1000)
+        assert sum(p.stat().st_size for p in path.parent.glob('*.jsonl')) > 1_000_000
+        opener = QuoteRecordingSet.open
+    else:
+        path = record_quotes(stream, tmp_path/'large.jsonl', duration=2000)
+        assert path.stat().st_size > 1_000_000
+        opener = QuoteRecording.open
+    tracemalloc.start()
+    try:
+        with opener(path) as replay:
+            assert len(replay) == 2000
+            assert sum(1 for _ in replay.samples()) == 2000
+            assert replay.quality()['samples'] == 2000
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1_000_000  # A loaded tuple of these JSON rows alone exceeds this bound.
+
+
+def test_rotation_preserves_samples_order_integrity_and_metadata(source, tmp_path):
+    from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+    stream, state, callbacks = source
+    callbacks.extend([lambda: state.tick(1, 101), lambda: state.tick(2, 103)])
+    path = record_quotes_rotating(stream, tmp_path/'set', duration=5, max_samples=2)
+    assert not stream.closed
+    manifest = json.loads(path.read_text())
+    assert [s['samples'] for s in manifest['segments']] == [2, 2, 1]
+    assert sorted(p.name for p in path.parent.glob('*.jsonl')) == [
+        '000000.quotes.jsonl', '000001.quotes.jsonl', '000002.quotes.jsonl',
+    ]
+    with QuoteRecordingSet.open(path) as replay:
+        assert replay.complete and len(replay) == 5
+        rows = list(replay.samples())
+        assert [r['quote']['bid'] for r in rows] == [100, 101, 101, 101, 101]
+        assert [r['quote']['ask'] for r in rows] == [102, 102, 103, 103, 103]
+        assert replay.quality()['distinct_observed_versions'] == 3
+        assert len(replay.metadata()['segments']) == 3
+        assert len(list(replay.samples())) == 5
+        # The logical fingerprint matches the same complete recording assembled in memory.
+        logical = QuoteRecording(
+            json.dumps(manifest['header'], sort_keys=True, separators=(',', ':')),
+            tuple(json.dumps(row, sort_keys=True, separators=(',', ':')) for row in rows),
+            json.dumps(manifest['end'], sort_keys=True, separators=(',', ':')),
+        )
+        assert replay.fingerprint() == logical.fingerprint()
+
+
+@pytest.mark.parametrize('max_samples', [0, -1, True, 1.5])
+def test_rotation_rejects_invalid_limits_without_creating_directories(
+    source, tmp_path, max_samples,
+):
+    from pyibquant import record_quotes_rotating
+
+    stream, _, _ = source
+    with pytest.raises(ValueError, match='max_samples'):
+        record_quotes_rotating(stream, tmp_path/'bad', duration=2, max_samples=max_samples)
+    assert not list(tmp_path.iterdir())
+
+
+def test_rotation_never_overwrites_existing_directories(source, tmp_path):
+    from pyibquant import record_quotes_rotating
+
+    stream, _, _ = source
+    target = tmp_path/'set'
+    target.mkdir()
+    (target/'keep').write_text('original')
+    with pytest.raises(FileExistsError):
+        record_quotes_rotating(stream, target, duration=2)
+    assert (target/'keep').read_text() == 'original'
+
+
+def rewrite_manifest(path, manifest):
+    manifest.pop('sha256', None)
+    manifest['sha256'] = hashlib.sha256(json.dumps(
+        manifest, sort_keys=True, separators=(',', ':'),
+    ).encode()).hexdigest()
+    path.write_text(json.dumps(manifest)+'\n')
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'bytes', 'reorder', 'omit', 'duplicate',
+                                     'traversal', 'count', 'manifest_hash'])
+def test_rotation_detects_missing_modified_reordered_or_omitted_segments(
+    source, tmp_path, mutation,
+):
+    from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+    stream, _, _ = source
+    path = record_quotes_rotating(stream, tmp_path/'set', duration=5, max_samples=2)
+    manifest = json.loads(path.read_text())
+    segment = path.parent/manifest['segments'][1]['file']
+    if mutation == 'missing':
+        segment.unlink()
+    elif mutation == 'bytes':
+        segment.write_text(segment.read_text().replace('"bid":100', '"bid":999'))
+    elif mutation == 'reorder':
+        manifest['segments'].reverse()
+    elif mutation == 'omit':
+        manifest['segments'].pop()
+    elif mutation == 'duplicate':
+        manifest['segments'][1] = manifest['segments'][0]
+    elif mutation == 'traversal':
+        manifest['segments'][0]['file'] = '../outside.jsonl'
+    elif mutation == 'count':
+        manifest['segments'][0]['samples'] += 1
+    elif mutation == 'manifest_hash':
+        manifest['sha256'] = '0'*64
+    if mutation == 'manifest_hash':
+        path.write_text(json.dumps(manifest))
+    else:
+        rewrite_manifest(path, manifest)
+    # Partial inspection must never bypass integrity/missing-file errors.
+    for allow in (False, True):
+        with pytest.raises((ValueError, OSError)):
+            QuoteRecordingSet.open(path, allow_incomplete=allow)
+
+
+@pytest.mark.parametrize('status', ['closed', 'disconnected', 'failed'])
+def test_rotating_terminal_session_requires_partial_opt_in(source, tmp_path, status):
+    from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+    stream, state, callbacks = source
+    callbacks.extend([lambda: None, lambda: state.finish(status, 'stopped')])
+    path = record_quotes_rotating(stream, tmp_path/'set', duration=10, max_samples=2)
+    with pytest.raises(ValueError, match='Incomplete'):
+        QuoteRecordingSet.open(path)
+    with QuoteRecordingSet.open(path, allow_incomplete=True) as replay:
+        assert not replay.complete and len(replay) == 3
+        assert replay.metadata()['end']['status'] == status
+        assert list(replay.samples())[-1]['quote']['status'] == status
+
+
+def test_rotation_keeps_reconnect_evidence_across_segment_boundaries(source, tmp_path):
+    from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+    stream, state, callbacks = source
+
+    def recover():
+        state.interrupt('lost socket')
+        state.resume()
+        state.actual_type = 'live'
+        state.tick(1, 101)
+    callbacks.extend([lambda: None, recover])
+    path = record_quotes_rotating(stream, tmp_path/'set', duration=4, max_samples=2)
+    with QuoteRecordingSet.open(path) as replay:
+        assert len(replay.quality()['gaps']) == 1
+        assert [r['quote']['generation'] for r in replay.samples()] == [0, 0, 1, 1]
+
+
+def test_rotation_io_failure_does_not_publish_a_success_manifest(source, tmp_path, monkeypatch):
+    from pyibquant import record_quotes_rotating
+    from pyibquant.quote_recording_set import _SegmentWriter
+
+    stream, _, _ = source
+    original = _SegmentWriter.write
+    count = 0
+
+    def fail(self, record, **kwargs):
+        nonlocal count
+        if record['type'] == 'sample':
+            count += 1
+            if count == 3:
+                raise OSError('disk full')
+        return original(self, record, **kwargs)
+    monkeypatch.setattr(_SegmentWriter, 'write', fail)
+    with pytest.raises(OSError, match='disk full'):
+        record_quotes_rotating(stream, tmp_path/'set', duration=5, max_samples=2)
+    assert not (tmp_path/'set'/'recording.json').exists()
+    assert QuoteRecording.load(tmp_path/'set'/'000000.quotes.jsonl').complete
+    assert not stream.closed
+
+
+def test_simulator_refuses_an_individual_rotation_segment(source, tmp_path):
+    from pyibquant import record_quotes_rotating
+    from pyibquant.option_backtest import backtest_option
+
+    stream, _, _ = source
+    manifest = record_quotes_rotating(stream, tmp_path/'set', duration=3, max_samples=2)
+    segment = QuoteRecording.load(manifest.parent/'000000.quotes.jsonl')
+    with pytest.raises(ValueError, match='rotated segment'):
+        backtest_option(segment, [False]*len(segment))
+
+
+@pytest.mark.parametrize('rotating', [False, True])
+def test_offline_replay_example_handles_single_files_and_recording_sets(
+    source, tmp_path, monkeypatch, capsys, rotating,
+):
+    import runpy
+    from pathlib import Path
+
+    from pyibquant import record_quotes_rotating
+
+    stream, _, _ = source
+    if rotating:
+        path = record_quotes_rotating(stream, tmp_path/'set', duration=3, max_samples=2)
+    else:
+        path = record_quotes(stream, tmp_path/'single.jsonl', duration=3)
+    args = ['replay_quotes', str(path)] + (['--recording-set'] if rotating else [])
+    monkeypatch.setattr('sys.argv', args)
+    runpy.run_path(str(Path(__file__).resolve().parents[1]/'examples'/'replay_quotes.py'),
+                   run_name='__main__')
+    document = json.loads(capsys.readouterr().out)
+    assert document['metadata']['complete'] and document['quality']['samples'] == 3
+    assert document['quality']['exchange_quote_age'] == 'unknown'
+
+
+@pytest.mark.parametrize('mutation', ['sequence', 'erase_gap'])
+def test_rotation_checks_cross_segment_continuity_even_when_all_hashes_are_recomputed(
+    source, tmp_path, mutation,
+):
+    from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+    stream, state, callbacks = source
+
+    def recover():
+        state.interrupt('lost socket')
+        state.resume()
+        state.tick(1, 101)
+    callbacks.append(recover)
+    path = record_quotes_rotating(stream, tmp_path/'set', duration=4, max_samples=2)
+    manifest = json.loads(path.read_text())
+    second = path.parent/manifest['segments'][1]['file']
+    rows = [json.loads(line) for line in second.read_text().splitlines()]
+    for row in rows[1:-1]:
+        if mutation == 'sequence':
+            row['quote']['sequence'] = 0
+        else:
+            row['quote']['generation'], row['quote']['gaps'] = 0, []
+    lines = [json.dumps(row, sort_keys=True, separators=(',', ':'))+'\n' for row in rows[:-1]]
+    rows[-1]['sha256'] = hashlib.sha256(''.join(lines).encode()).hexdigest()
+    second.write_text(''.join(lines)+json.dumps(rows[-1])+'\n')
+    manifest['segments'][1]['sha256'] = hashlib.sha256(second.read_bytes()).hexdigest()
+    logical = [manifest['header']]
+    for entry in manifest['segments']:
+        lines = (path.parent/entry['file']).read_text().splitlines()
+        logical.extend(row for row in map(json.loads, lines)
+                       if row['type'] == 'sample')
+    manifest['end']['sha256'] = hashlib.sha256(''.join(
+        json.dumps(row, sort_keys=True, separators=(',', ':'))+'\n' for row in logical
+    ).encode()).hexdigest()
+    rewrite_manifest(path, manifest)
+    with pytest.raises(ValueError, match='backward'):
+        QuoteRecordingSet.open(path)
+
+
+def test_closing_set_reader_closes_an_unfinished_segment_iterator(source, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+    stream, _, _ = source
+    path = record_quotes_rotating(stream, tmp_path/'set', duration=4, max_samples=2)
+    original = Path.open
+    files = []
+
+    def track(self, *args, **kwargs):
+        file = original(self, *args, **kwargs)
+        files.append(file)
+        return file
+    monkeypatch.setattr(Path, 'open', track)
+    with QuoteRecordingSet.open(path) as replay:
+        iterator = replay.samples()
+        next(iterator)
+    assert files and all(file.closed for file in files)
+    with pytest.raises(ValueError, match='closed'):
+        next(iterator)

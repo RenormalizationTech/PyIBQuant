@@ -10,7 +10,13 @@ import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from pyibquant import Market, QuoteRecording, record_quotes
+from pyibquant import (
+    Market,
+    QuoteRecording,
+    QuoteRecordingSet,
+    record_quotes,
+    record_quotes_rotating,
+)
 from pyibquant.errors import PyIBQuantError
 
 
@@ -29,10 +35,14 @@ def main() -> None:
                         choices=['live', 'frozen', 'delayed', 'delayed_frozen'])
     parser.add_argument('--duration', type=float, default=10)
     parser.add_argument('--interval', type=float, default=1)
+    parser.add_argument('--max-samples-per-file', type=int,
+                        help='Rotate into a recording set after this many samples per file')
     parser.add_argument('--reconnect', action='store_true',
                         help='Restore quote subscription after disconnect; record gaps explicitly')
     parser.add_argument('--output-dir', type=Path, default=Path('charts/options-research'))
     args = parser.parse_args()
+    if args.max_samples_per_file is not None and args.max_samples_per_file <= 0:
+        parser.error('--max-samples-per-file must be positive')
     fields = (args.expiry, args.strike, args.right)
     selected = any(value is not None for value in fields)
     if selected and any(value is None for value in fields):
@@ -57,20 +67,28 @@ def main() -> None:
                                   trading_class=args.trading_class, multiplier=args.multiplier)
             with market.stream_quote(option, market_data_type=args.market_data_type,
                                      reconnect=args.reconnect) as stream:
-                path = record_quotes(stream, target / 'quotes.jsonl', duration=args.duration,
-                                     interval=args.interval)
+                if args.max_samples_per_file is None:
+                    path = record_quotes(stream, target / 'quotes.jsonl', duration=args.duration,
+                                         interval=args.interval)
+                else:
+                    path = record_quotes_rotating(
+                        stream, target / 'recording', duration=args.duration,
+                        interval=args.interval,
+                        max_samples=args.max_samples_per_file,
+                    )
         # Reload after all broker connections are closed.
-        recording = QuoteRecording.load(path, allow_incomplete=True)
-        rows = list(recording.samples())
-        pairs = sum(row['quote']['bid'] is not None and row['quote']['ask'] is not None
-                    for row in rows)
-        print(f'Saved {len(recording)} sampled observations ({pairs} with bid/ask) to {path}')
-        print(f'Recording complete: {recording.complete}; '
-              f'final status: {recording.metadata()["end"]["status"]}')
-        quality = recording.quality()
+        opener = (QuoteRecording.open if args.max_samples_per_file is None
+                  else QuoteRecordingSet.open)
+        with opener(path, allow_incomplete=True) as recording:
+            quality = recording.quality()
+            print(f'Saved {len(recording)} sampled observations '
+                  f'({quality["with_bid_ask"]} with bid/ask) to {path}')
+            print(f'Recording complete: {recording.complete}; '
+                  f'final status: {recording.metadata()["end"]["status"]}')
+            complete = recording.complete
         print(f'Quote generation: {quality["generation"]}; '
               f'recorded gaps: {len(quality["gaps"])}')
-        if not recording.complete:
+        if not complete:
             raise SystemExit('Recording ended early; inspect its terminal '
                              'status/error before research.')
     except (PyIBQuantError, ValueError, OSError) as exc:

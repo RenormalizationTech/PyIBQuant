@@ -4,9 +4,9 @@ Last reconciled: 2026-10-16. Checkboxes describe implemented behavior, not a rel
 The full project direction remains in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
-Current status: live work stopped at the user's request. Quote-recovery verification
-is blocked by IBKR 10197 (competing live session). Resume that check only when the
-user confirms market-data access is available. Offline validation: 356 tests,
+Current status: market-data access was restored after the close. Frozen quote
+recovery and rotating capture/replay passed against TWS. Confirmed-live recovery
+verification awaits an open trading session. Offline validation: 388 tests,
 Ruff and mypy pass.
 
 ## Goal and scope
@@ -72,8 +72,8 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
 Live-session option capture and offline simulation were verified on 2026-10-16.
-Next: finish live quote-recovery verification after IBKR 10197 (competing live
-session) is cleared, then recording rotation/large-file replay. The user chose our
+Next during an open session: finish confirmed-live quote-recovery verification.
+Sample-count rotation and disk-backed replay are implemented and verified. The user chose our
 collected recordings; both frozen and live AAPL acquisition/replay have been
 verified. Keep paper execution separate; the simulator does not submit orders or model account
 settlement, dividends, taxes, liquidity or historical nominal-share execution.
@@ -107,8 +107,14 @@ settlement, dividends, taxes, liquidity or historical nominal-share execution.
 - [ ] Broaden live valuation coverage; asynchronous/quiet sides can still leave marks unknown
 - [x] Opt-in quote reconnect with exact contract identity, empty replacement generations and persistent gap history
 - [x] Version 2 recording/replay continuity checks, legacy version 1 loading, cross-gap backtest rejection
-- [ ] Live quote-recovery integration verification (blocked by IBKR 10197 competing live session)
-- [ ] Recording file rotation/large-file replay
+- [x] After-hours frozen quote-recovery integration check (own socket only; new fields, gap history, cancellation and simulation rejection)
+- [ ] Confirmed-live quote-recovery integration verification during an open trading session
+- [x] Exclusive sample-count recording rotation with checksummed, ordered segment manifest
+- [x] Prevalidated disk-backed single-file/set replay and bounded-memory quality summaries
+- [x] Cross-segment identity/sequence/gap checks; corruption, missing-file, partial-state and memory tests
+- [x] After-hours frozen rotating capture → offline set replay verified against TWS
+- [ ] Streaming options simulation and exact multi-file input export
+- [ ] Closed-file resume/restart recovery (separate from reconnecting an open stream)
 - [ ] Chart bid/ask display
 - [ ] Historical quote imports, richer liquidity models and expiry/exercise/assignment semantics
 

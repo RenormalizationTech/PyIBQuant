@@ -1,10 +1,10 @@
 # Development handoff
 
-Checkpoint: 2026-10-16. Live option capture, explicit side-update simulation and
-opt-in quote reconnect are implemented. All 356 local tests, Ruff and mypy pass.
-Live reconnect verification remains blocked by IBKR 10197 (competing live session).
-The user cannot restore market-data access now and explicitly stopped live work.
-Do not retry the live check until the user asks to resume and confirms access.
+Checkpoint: 2026-10-16. After the user restored market-data access after the close,
+frozen quote recovery and rotating capture/replay passed against TWS. Single-file
+and recording-set readers now validate before disk-backed replay. All 388 local
+tests, Ruff and mypy pass. Confirmed-live quote-recovery verification still awaits
+an open trading session; frozen checks do not establish live freshness or fills.
 
 The current changes are saved as a local Git checkpoint; inspect `git log -1` and
 `git status -sb` when resuming or transferring machines. No remote push is part of
@@ -34,8 +34,10 @@ long/flat simulator and offline JSON/CSV example are now implemented. Live-sessi
 capture and offline simulation were verified on 2026-10-16. An explicit side-update
 freshness policy now completes simulated round trips on both live recordings.
 Opt-in quote reconnect and gap/generation recording have local test coverage.
-Next: finish live quote-recovery verification after IBKR 10197 (competing live
-session) is cleared. See the follow-ups below for evidence and limitations.
+Next during an open trading session: finish confirmed-live quote-recovery
+verification. Sample-count rotation and disk-backed replay are complete; closed-file
+resume/restart recovery and streaming simulation remain separate future work.
+See the follow-ups below for evidence and limitations.
 Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
@@ -51,6 +53,73 @@ can be recovered or sampled quotes are a full tick archive.
 Keep manual `ibapi` installation and logged-in TWS/Gateway as prerequisites for
 IBKR access. CI and automated SDK distribution are outside current scope. Keep
 local unit, browser and explicit TWS integration checks.
+
+## After-hours recovery, rotation and disk replay — 2026-10-16
+
+This checkpoint supersedes the earlier competing-session blocker. The user restored
+market-data access after the close and authorized the work that does not require
+an open market. All requests remained data-only; no settings, other sessions or
+orders were changed.
+
+Verified against TWS:
+
+- `python tests/live_quote_recovery_check.py --market-data-type frozen --client-id 218`
+  passed. The check disconnects only its own socket, preserves the owner/cursor,
+  records a replacement generation and gap, receives new confirmed-frozen fields,
+  cancels the restored subscription, reloads offline and verifies simulator refusal.
+  Result: 120 samples, 108 frozen/12 unknown labels, 107 bid/ask pairs, 92 model
+  IV/delta observations, one replacement generation and one recorded gap.
+  Local artifacts: `charts/quote-recovery-check/20261016T213306389445Z/`.
+- `examples/options_research.py` with the selected AAPL 2026-11-20 340 C, frozen
+  mode, duration 6, interval .5, max samples/file 4 and client 219 passed.
+  Result: 12 samples across three files, ten confirmed-frozen bid/ask and model
+  IV/delta observations, two initial unknown samples, no crossed/delayed quotes.
+  The stream/Market closed before set replay. Local artifacts:
+  `charts/rotating-options-check/20261016T213804974068Z/recording/`.
+- Both artifact directories retain `validation.json` with metadata, quality and
+  input fingerprint. Data/reports stay under ignored `charts/`, outside Git.
+
+New APIs and behavior:
+
+- `QuoteRecording.open(path)` is a context-managed disk-backed alternative to
+  immutable in-memory `load()`. It validates the entire file before returning,
+  then rechecks integrity/fingerprint on every complete iteration. Its held file
+  descriptor prevents path replacement from swapping inputs. Rows and metadata
+  are independent copies; one iterator may be active per reader. Do not modify
+  inputs in place; exhaust iterators to detect edits during replay.
+- `record_quotes_rotating(stream, directory, duration=..., interval=...,
+  max_samples=...)` writes exclusive numbered segments with independent footer
+  checksums and predecessor hashes. A checksummed manifest is atomically published
+  only after a graceful finish; terminal failures publish explicit partial status.
+  IO errors/crashes leave diagnostic segments without a successful manifest.
+  Existing directories are never overwritten. Rotation does not reset sampling,
+  quote sequence, feed provenance or gap history. The caller owns the stream.
+- `QuoteRecordingSet.open(manifest)` prevalidates all ordered segments and streams
+  the complete logical session. It checks raw segment bytes, identity, counts,
+  predecessor chain and cross-segment sequence/gap continuity. Missing/corrupt
+  segments fail even with partial inspection enabled. Memory retains the largest
+  sample/gap history plus the manifest descriptors, not every sample.
+- `quality()` now counts distinct monotonic quote sequences without retaining a
+  growing set. Replay memory tests use 2,000 samples in both single-file/set form
+  and pass a peak allocation limit below 1 MB for inputs larger than 1 MB.
+- The options simulator refuses individual rotation segments because a segment
+  footer does not certify a complete session. The existing backtest CLI still
+  consumes single-file inputs. Streaming simulation, exact multi-file input export,
+  closed-file resume/restart recovery and automatic pruning remain future work.
+- `examples/options_research.py --max-samples-per-file N` captures a set;
+  `examples/replay_quotes.py PATH [--recording-set] [--allow-incomplete]` validates
+  and summarizes inputs offline without SDK/optional dependencies.
+
+Validation: all 388 local tests, Ruff, mypy and `git diff --check` pass. Tests cover
+legacy inputs, corruption before exposure, consumer mutation, concurrent iterators,
+path replacement, reader cleanup with unfinished iterators, missing/reordered/duplicated
+segments, erased cross-segment gap
+history with recomputed hashes, partial states, disk failures and bounded memory.
+The common streaming validator also backs the existing immutable loader.
+
+Remaining market-session check: run `python tests/live_quote_recovery_check.py`
+when confirmed-live data is available. The explicit frozen run verifies lifecycle
+only; it does not replace that live check or make frozen data a simulation input.
 
 ## Quote freshness and reconnect follow-up — 2026-10-16
 
@@ -859,8 +928,10 @@ counts and chart screenshots are local artifacts, not fixtures or release data.
 - Historical bars are US stock/ETF TRADES only, with no delayed-history fallback.
 - US stock/ETF quote snapshots, selected streams and grouped option discovery are implemented.
 - Default quote handles end on disconnect; opt-in recovery clears fields and records gaps.
-- Live quote-recovery verification is blocked by IBKR 10197; file resume/rotation remain planned.
-- Sampled recordings are not tick archives; replay loads files in memory.
+- Frozen quote recovery passed against TWS; confirmed-live recovery still needs an open session.
+- Sample-count rotation/disk-backed replay are implemented; closed-file resume is not.
+- Sampled recordings are not tick archives; `load()` holds rows in memory, while
+  `open()` and recording-set replay scan from disk.
 - The option simulator is intraday, long/flat and pre-expiry only; exercise/assignment/settlement modeling remains pending. Live capture/replay
   passed, with receipt-age/skew rules restricting fills and valuations.
 - Depth, chart bid/ask display and historical option quote imports are not implemented.

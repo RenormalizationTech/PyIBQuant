@@ -29,9 +29,10 @@ verified against TWS. Grouped option discovery, independently owned quote stream
 and sampled recording/offline replay are also implemented. The first intraday
 option simulator now consumes our collected recordings with explicit ask/bid
 fills, costs and quote-quality checks. Live-session capture and offline simulation were verified on 2026-10-16.
-Quote reconnect with explicit generation/gap recording is implemented with local
-checks; its live recovery check is blocked by IBKR 10197 (competing live session).
-Next: restore live-data access and verify recovery; file rotation remains planned. User-controlled paper trading
+Quote reconnect with explicit generation/gap recording passed local and after-hours
+frozen-data checks. Sample-count file rotation and validated disk-backed replay
+are implemented. Confirmed-live recovery verification awaits an open trading
+session. User-controlled paper trading
 remains on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
 the project owner's primary personal interest. A focused options research pilot
@@ -504,9 +505,83 @@ generation/gap history in each observation; version 1 recordings still load.
 Replay rejects generation rollback, revised/erased observed gaps and pre-gap fields
 carried into a replacement generation. A duration ending while disconnected is
 incomplete. Opt-in quote recovery can continue recording in the same open file;
-resuming a closed file, disk rotation and large-file streaming replay remain planned.
+sample-count rotation and disk-backed replay are described below. Resuming a
+closed file remains planned.
 The first options simulator rejects every recording with a reconnect gap, including
 recordings started after recovery; cross-generation simulation is not modeled.
+
+### Rotating capture and disk-backed replay
+
+Single-file recordings can be validated and inspected without loading every sample:
+
+```python
+from pyibquant import QuoteRecording
+
+with QuoteRecording.open("charts/quotes/aapl.jsonl") as replay:
+    print(replay.metadata(), replay.fingerprint())
+    for row in replay.samples():
+        print(row["sampled_at"], row["quote"]["bid"])
+```
+
+`open()` makes a complete validation pass before returning the reader. Each
+`samples()` call makes another checked pass through the same open file; path
+replacement cannot substitute different inputs. Readers retain one sample and its
+gap history, rather than all samples. Returned rows/metadata are independent
+copies. `quality()` also uses bounded sample memory. Use a context manager and
+one active iterator per reader. Do not modify inputs in place; exhaust iterators
+to detect changes during replay. `load()` remains the immutable in-memory API.
+Both readers support explicit `allow_incomplete=True` diagnostic inspection and
+reject checksum failures. Prevalidation is a full scan, not instant random access.
+
+For longer capture, rotate into a new directory at sample-count boundaries:
+
+```python
+from pyibquant import QuoteRecordingSet, record_quotes_rotating
+
+# Inside the caller-owned stream context:
+manifest = record_quotes_rotating(
+    stream, "charts/quotes/new-recording", duration=3600, interval=.5,
+    max_samples=10_000,
+)
+# Offline, after the stream and Market have closed:
+with QuoteRecordingSet.open(manifest) as replay:
+    print(len(replay), replay.quality())
+    for row in replay.samples():
+        process(row)  # Your analysis; no broker connection is used.
+```
+
+The directory must not already exist. Capture writes numbered JSONL segments with
+independent integrity footers and predecessor hashes, then atomically publishes
+`recording.json` after a graceful finish. Sample timing, identity, feed labels,
+sequence cursors and reconnect history continue across rotation. File lengths
+vary with row size; `max_samples` limits sample count, not bytes. No overwrite,
+pruning, closed-file resume or restart recovery is implied. An IO error or crash
+leaves diagnostic segment files without a successful manifest. Graceful terminal
+states publish an explicitly incomplete manifest requiring opt-in inspection.
+A missing/corrupt segment always fails, even with `allow_incomplete=True`.
+
+`QuoteRecordingSet.open()` validates the manifest and every segment before yielding
+samples. It checks exact segment bytes, order, counts, contract/feed identity and
+continuity at segment boundaries, then rechecks them during iteration. Memory is
+bounded by the largest sample/gap history plus one manifest descriptor per segment.
+The fingerprint identifies the complete logical session. Segment footers certify
+segment completion, not completion of the whole session; the options simulator
+rejects individual rotated segments. Its CLI still consumes single-file inputs;
+streaming simulation and export of multi-file simulation inputs remain future work.
+
+```sh
+python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --market-data-type frozen --duration 60 --interval .5 --max-samples-per-file 20
+python examples/replay_quotes.py "charts/options-research/<run>/quotes.jsonl"
+python examples/replay_quotes.py "charts/options-research/<run>/recording/recording.json" --recording-set
+python tests/live_quote_recovery_check.py --market-data-type frozen
+```
+
+After-hours TWS checks on 2026-10-16 passed: 120 sampled observations across one
+socket reconnect with confirmed frozen fields after recovery, and a separate
+12-sample recording split into three four-sample files with offline set replay.
+Frozen checks verify acquisition/lifecycle only; frozen data remains ineligible
+for the options simulator. Run the default live recovery check during an open
+session to verify confirmed-live recovery separately.
 
 The runnable example discovers a chain alone, or records one selected contract:
 
@@ -614,8 +689,9 @@ side-update policy completed one simulated round trip each, net -38.4125 and
 -32.42 with commission 1 and 5 bps adverse slippage. Some intermediate valuations
 remained unknown, so full-path drawdown is still unknown. These short demonstration
 runs validate mechanics, not strategy performance. The strict default still blocks
-both exits. Quote recovery has local coverage; the live recovery check was blocked
-before any intentional disconnect by error 10197 (competing live session).
+both exits. Quote recovery has local coverage and passed an after-hours check with
+confirmed frozen fields on 2026-10-16 after market-data access was restored.
+Confirmed-live recovery verification remains pending for an open trading session.
 
 ### HTML snapshot
 
