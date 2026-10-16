@@ -15,3 +15,7 @@ class DataError(PyIBQuantError):
 
 class RequestTimeout(DataError):
     """The provider did not finish a request in time."""
+
+
+class CacheError(PyIBQuantError):
+    """A local historical cache entry could not be read or written."""

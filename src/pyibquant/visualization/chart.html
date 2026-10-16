@@ -15,6 +15,9 @@
     #meta { margin-left: 12px; font-weight: 400; }
     button { background: #172232; color: #dce6f4; border: 1px solid #33445a; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
     button:hover { background: #263b54; }
+    button[aria-pressed="true"] { background: #213d50; border-color: #568ca7; }
+    .chart-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .chart-actions label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8ca0b9; }
     #chart-controls { padding: 16px 28px 0; }
     #chart-controls fieldset { margin: 0; padding: 0; border: 0; display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
     #chart-controls label { display: grid; gap: 6px; font-size: 12px; color: #8ca0b9; }
@@ -24,6 +27,8 @@
     :disabled { opacity: .55; cursor: default; }
     #controls-note { font-size: 12px; color: #8ca0b9; }
     #status { padding: 14px 28px 0; }
+    #history-controls { padding: 10px 28px 0; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    #history-status { font-size: 12px; color: #8ca0b9; }
     #error { margin: 12px 28px; color: #ffc5a8; white-space: pre-wrap; font-size: 13px; }
     #legend { min-height: 34px; padding: 12px 28px; font: 12px ui-monospace, monospace; color: #b9cce1; }
     #chart { width: 100%; height: calc(100dvh - 245px); min-height: 350px; }
@@ -36,7 +41,12 @@
 <body>
   <header>
     <div><div class="brand">PYIBQUANT / MARKET OBSERVATORY</div><h1><span id="symbol"></span><span id="meta"></span></h1></div>
-    <div><button id="fit">Fit data</button> <button id="latest">Latest</button></div>
+    <div class="chart-actions">
+      <label for="right-margin">Right space<select id="right-margin" title="Space after the latest candle as a percentage of chart width">
+        <option value="0">0%</option><option value="0.1" selected>10%</option><option value="0.2">20%</option><option value="0.3">30%</option><option value="0.4">40%</option>
+      </select></label>
+      <button id="autoscale" aria-pressed="true" title="Toggle automatic price scaling (A). Drag the price axis to scale manually.">Autoscale: on</button><button id="fit">Fit data</button><button id="latest">Latest</button>
+    </div>
   </header>
   <form id="chart-controls">
     <fieldset id="selection-fields" disabled>
@@ -44,22 +54,29 @@
       <label for="interval-input">Interval<select id="interval-input" name="interval">
         <option value="30s">30 seconds</option><option value="1min">1 minute</option>
         <option value="5min">5 minutes</option><option value="15min">15 minutes</option>
-        <option value="30min">30 minutes</option><option value="1h">1 hour</option><option value="1d">1 day</option>
+        <option value="30min">30 minutes</option><option value="1h">1 hour</option>
+        <option value="2h">2 hours</option><option value="4h">4 hours</option><option value="1d">1 day</option>
+        <option value="1w">1 week</option><option value="1y">1 year</option>
       </select></label>
       <label for="duration-input">History<input id="duration-input" name="duration" maxlength="16" required placeholder="1 D" title="Examples: 1 D, 2 W, 6 M, 1 Y"></label>
+      <label for="hours-input">Trading hours<select id="hours-input" name="hours">
+        <option value="regular">Regular hours</option><option value="extended">Include extended hours</option>
+      </select></label>
       <button id="load-chart" type="submit">Load chart</button>
     </fieldset>
     <p id="controls-note">Saved snapshot. To change markets, open the connected chart with pyibquant chart AAPL --live.</p>
   </form>
   <div id="status" role="status"></div><div id="error" role="alert" hidden></div>
+  <div id="history-controls"><button id="load-older" disabled>Load older</button><span id="history-status" role="status"></span></div>
   <div id="legend"></div>
   <div id="chart"><canvas id="market-canvas" tabindex="0" role="img"
-    aria-label="Candlestick and volume chart. Arrow keys pan; plus and minus zoom; Home fits data; End shows latest bars.">
+    aria-label="Candlestick and volume chart. Left and right pan time; up and down pan price in manual mode; A toggles autoscale; plus and minus zoom; Home fits data; End shows latest bars.">
     Your browser needs Canvas support to display market charts.
   </canvas></div>
   <footer>
-    Scroll or pinch to zoom · Drag to pan · Crosshair for OHLCV · Double-click to fit<br>
-    Arrow keys to pan · + / − to zoom · Home to fit · End for latest · Intraday times in UTC
+    Scroll or pinch to zoom · Drag to pan time (and price with Autoscale off) · Drag either axis to scale<br>
+    Double-click an axis to reset it · Double-click chart / Home to fit both axes · A toggles autoscale<br>
+    ← / → pan time · ↑ / ↓ pan price manually · + / − zoom · End for latest · Intraday times in New York (EST/EDT)
   </footer>
   <script id="chart-data" type="application/json">__CHART_DATA__</script>
   <script>__CHART_SCRIPT__</script>

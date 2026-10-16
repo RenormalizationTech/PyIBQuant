@@ -9,8 +9,11 @@
 ## Implementation checkpoint — 2026-10-15
 
 The initial IBKR-to-chart slice is implemented, with live bar updates and browser
-symbol/interval/history controls. The renderer is our own HTML Canvas code, with
-no TradingView library dependency. This remains a development prototype.
+symbol/interval/history and regular/extended-hours controls. Chart foundations now
+include price/time scaling, older-history pagination, optional Parquet caching,
+2-hour/4-hour/weekly/yearly intervals and New York display with automatic EST/EDT.
+The renderer is our own HTML Canvas code, with no TradingView library dependency.
+Next: session shading and separators. This remains a development prototype.
 
 The visualization goal has expanded to a daily charting workspace that can replace
 TradingView for frequent IBKR US stock/ETF usage. Deliver it incrementally; full
@@ -1020,14 +1023,19 @@ This should open an interactive browser visualization.
 
 ### TODO
 
-- [ ] cache interface
-- [ ] configurable cache directory
-- [ ] cache enable/disable
-- [ ] historical-query caching
-- [ ] cache metadata
-- [ ] cache invalidation policy
-- [ ] cache inspection
-- [ ] cache clearing
+- [x] cache interface
+- [x] configurable cache directory
+- [x] cache enable/disable
+- [x] historical-query caching
+- [x] cache metadata
+- [x] cache invalidation policy
+- [x] cache inspection
+- [x] cache clearing
+
+Implemented as an optional exact-query Parquet cache. Live subscriptions bypass
+it; older pages can reuse entries. Fixed-end queries expire after 24 hours by
+default and relative snapshots after at most five minutes. See README for
+configuration, refresh, metadata inspection and scoped cache clearing.
 
 Initial storage format:
 

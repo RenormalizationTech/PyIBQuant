@@ -15,7 +15,11 @@ def raw_bar(timestamp="1792071000", close=101):
 
 
 @pytest.fixture
-def provider():
+def provider(monkeypatch):
+    monkeypatch.setattr(
+        "pyibquant.data.providers.ibkr.current_time",
+        lambda: datetime(2026, 10, 15, 16, tzinfo=UTC).timestamp(),
+    )
     result = IBKRProvider("127.0.0.1", 7497, 71, 0.01)
     result.isConnected = Mock(return_value=True)
     result.cancelHistoricalData = Mock()
@@ -59,6 +63,68 @@ def test_historical_request_and_late_updates(provider):
     assert len(series) == 2
     provider.connectionClosed()
     assert series.error == "IBKR connection closed"
+
+
+@pytest.mark.parametrize(
+    ("interval", "size", "timestamp"),
+    [("2h", "2 hours", "1792071000"), ("4h", "4 hours", "1792071000"),
+     ("1w", "1 week", "20261012")],
+)
+def test_coarser_native_intervals_and_live_replacement(provider, interval, size, timestamp):
+    resolve_contract(provider)
+
+    def history(req_id, *args):
+        provider.historicalData(req_id, raw_bar(timestamp))
+        provider.historicalDataEnd(req_id, "", "")
+
+    provider.reqHistoricalData = Mock(side_effect=history)
+    series = provider.bars("AAPL", interval=interval, duration="1 Y", live=True)
+    args = provider.reqHistoricalData.call_args.args
+    assert args[3:5] == ("2 Y" if interval == "1w" else "1 Y", size)
+    provider.historicalDataUpdate(args[0], raw_bar(timestamp, close=102))
+    assert len(series) == 1
+    assert series.snapshot()[0].close == 102
+    if interval == "1w":
+        assert series.snapshot()[0].timestamp == date(2026, 10, 12)
+        assert series.payload()["bars"][0]["time"] == "2026-10-12"
+    else:
+        assert series.snapshot()[0].timestamp == datetime.fromtimestamp(int(timestamp), UTC)
+
+
+def test_yearly_aggregation_replaces_months_and_handles_year_boundary(provider):
+    resolve_contract(provider)
+
+    def month(timestamp, opening, high, low, close, volume):
+        return SimpleNamespace(
+            date=timestamp, open=opening, high=high, low=low, close=close, volume=volume
+        )
+
+    def history(req_id, *args):
+        # Out-of-order callbacks must still use the chronological open/close.
+        provider.historicalData(req_id, month("20261201", 120, 140, 110, 130, 200))
+        provider.historicalData(req_id, month("20260101", 100, 125, 90, 120, 100))
+        provider.historicalData(req_id, month("20250101", 80, 100, 70, 95, 50))
+        provider.historicalDataEnd(req_id, "", "")
+
+    provider.reqHistoricalData = Mock(side_effect=history)
+    series = provider.bars("AAPL", interval="1y", duration="10 Y", live=True)
+    args = provider.reqHistoricalData.call_args.args
+    assert args[3:5] == ("11 Y", "1 month")
+    assert series.snapshot() == (
+        Bar(date(2025, 1, 1), 80, 100, 70, 95, 50),
+        Bar(date(2026, 1, 1), 100, 140, 90, 130, 300),
+    )
+    correction = month("20261201", 120, 135, 115, 125, 250)
+    provider.historicalDataUpdate(args[0], correction)
+    provider.historicalDataUpdate(args[0], correction)
+    assert series.snapshot()[-1] == Bar(date(2026, 1, 1), 100, 135, 90, 125, 350)
+    provider.historicalDataUpdate(args[0], month("20270101", 125, 150, 120, 145, 10))
+    assert len(series) == 3
+    assert series.snapshot()[-1] == Bar(date(2027, 1, 1), 125, 150, 120, 145, 10)
+    assert "may be partial" in series.warnings[0]
+    provider.cancel_bars(series)
+    provider.cancelHistoricalData.assert_called_once_with(args[0])
+    assert not provider._requests
 
 
 def test_data_permission_failure_is_immediate_and_cancels(provider):
@@ -147,7 +213,7 @@ def test_selection_releases_previous_subscription_after_success():
     loader, cancel = Mock(return_value=replacement), Mock()
     session = ChartSession(original, loader, cancel)
     assert session.select("SPY", "5min", "1 D")["symbol"] == "SPY"
-    loader.assert_called_once_with("SPY", "5min", "1 D")
+    loader.assert_called_once_with("SPY", "5min", "1 D", True)
     cancel.assert_called_once_with(original)
     assert session.series is replacement
 
@@ -163,6 +229,47 @@ def test_failed_selection_keeps_previous_chart_and_serializes_requests():
     with session._selection_lock, pytest.raises(BlockingIOError):
         session.select("SPY", "5min", "1 D")
     loader.assert_called_once()
+
+
+def test_trading_hours_switch_persists_and_failure_keeps_active_hours():
+    original = BarSeries("AAPL", "1min", live=True)
+    extended = BarSeries("AAPL", "1min", live=True)
+    extended.regular_hours = False
+    loader = Mock(return_value=extended)
+    cancel = Mock()
+    session = ChartSession(original, loader, cancel)
+    first_id = session.selection_id
+    assert session.select("AAPL", "1min", "1 D", False)["regular_hours"] is False
+    assert session.selection_id != first_id
+    loader.assert_called_once_with("AAPL", "1min", "1 D", False)
+    session.select("SPY", "5min", "1 D")
+    loader.assert_called_with("SPY", "5min", "1 D", False)
+    loader.side_effect = DataError("Unavailable")
+    with pytest.raises(DataError):
+        session.select("AAPL", "1min", "1 D", True)
+    assert session.series is extended
+    assert session.payload()["regular_hours"] is False
+    assert cancel.call_count == 2
+    for invalid in ["false", 0, 1]:
+        with pytest.raises(ValueError, match="boolean"):
+            session.select("AAPL", "1min", "1 D", invalid)
+
+
+def test_market_browser_selection_passes_hours_to_provider(monkeypatch):
+    from pyibquant import Market
+
+    provider = Mock()
+    initial = BarSeries("AAPL", "1min", live=True)
+    initial.primary_exchange = "NASDAQ"
+    server = Mock()
+    monkeypatch.setattr("pyibquant.visualization.chart.serve_chart", server)
+    Market(provider).serve(initial, open_browser=False)
+    load = server.call_args.kwargs["loader"]
+    load("AAPL", "5min", "2 D", False)
+    provider.bars.assert_called_once_with(
+        "AAPL", interval="5min", duration="2 D", live=True,
+        regular_hours=False, primary_exchange="NASDAQ", refresh=False,
+    )
 
 
 def test_cancel_series_does_not_cancel_other_subscriptions(provider):

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
+from .data.cache import HistoricalCache, default_cache_dir
 from .errors import PyIBQuantError
 from .market import Market
 
@@ -16,7 +18,9 @@ def main() -> int:
     chart = sub.add_parser("chart", help="Chart a US stock or ETF")
     chart.add_argument("symbol")
     chart.add_argument(
-        "--interval", default="1min", choices=["30s", "1min", "5min", "15min", "30min", "1h", "1d"]
+        "--interval",
+        default="1min",
+        choices=["30s", "1min", "5min", "15min", "30min", "1h", "2h", "4h", "1d", "1w", "1y"],
     )
     chart.add_argument("--duration", default="1 D")
     chart.add_argument("--host", default="127.0.0.1")
@@ -31,10 +35,43 @@ def main() -> int:
     )
     chart.add_argument("--output", type=Path, default=Path("charts/chart.html"))
     chart.add_argument("--no-browser", action="store_true")
+    cache_flags = chart.add_mutually_exclusive_group()
+    cache_flags.add_argument("--cache", action="store_true", help="Enable local historical caching")
+    cache_flags.add_argument("--no-cache", action="store_true", help="Disable historical caching")
+    chart.add_argument("--cache-dir", type=Path, help="Enable caching in this directory")
+    chart.add_argument(
+        "--cache-max-age", type=float, default=86400, help="Cache lifetime in seconds"
+    )
+    chart.add_argument(
+        "--refresh-cache", action="store_true", help="Bypass reads and refresh cache entries"
+    )
+    cache = sub.add_parser("cache", help="Inspect or clear the local historical cache without IBKR")
+    cache.add_argument("action", choices=["inspect", "clear"])
+    cache.add_argument("--cache-dir", type=Path, default=default_cache_dir())
     args = parser.parse_args()
     try:
+        if args.command == "cache":
+            store = HistoricalCache(args.cache_dir)
+            if args.action == "inspect":
+                print(json.dumps(store.inspect(), indent=2))
+            else:
+                print(f"Removed {store.clear()} historical cache entries from {store.directory}")
+            return 0
+        cache_dir = (
+            None
+            if args.no_cache
+            else (args.cache_dir or (default_cache_dir() if args.cache else None))
+        )
+        if args.refresh_cache and cache_dir is None:
+            raise ValueError("--refresh-cache requires --cache or --cache-dir")
         with Market.ibkr(
-            host=args.host, port=args.port, client_id=args.client_id, timeout=args.timeout
+            host=args.host,
+            port=args.port,
+            client_id=args.client_id,
+            timeout=args.timeout,
+            cache_dir=cache_dir,
+            cache_max_age=args.cache_max_age,
+            refresh_cache=args.refresh_cache,
         ) as market:
             bars = market.bars(
                 args.symbol,

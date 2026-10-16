@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from math import isfinite
@@ -56,6 +57,10 @@ class BarSeries:
         self.primary_exchange = ""
         self.status = "Loading historical data"
         self.error: str | None = None
+        self.history_exhausted = False
+        self.cache_hit = False
+        self.cache_created_at: str | None = None
+        self.history_cache_hit = False
         self.warnings: list[str] = []
         self._bars: dict[datetime | date, Bar] = {}
         self._lock = RLock()
@@ -67,6 +72,16 @@ class BarSeries:
     def __len__(self) -> int:
         with self._lock:
             return len(self._bars)
+
+    def prepend(self, bars: Iterable[Bar]) -> int:
+        """Merge older timestamps atomically; never replace existing/live candles."""
+        with self._lock:
+            earliest = min(self._bars) if self._bars else None
+            count = len(self._bars)
+            for bar in bars:
+                if earliest is None or bar.timestamp < earliest:
+                    self._bars.setdefault(bar.timestamp, bar)
+            return len(self._bars) - count
 
     def snapshot(self) -> tuple[Bar, ...]:
         with self._lock:
@@ -80,8 +95,13 @@ class BarSeries:
                 interval=self.interval,
                 provider=self.provider,
                 live=self.live,
+                regular_hours=self.regular_hours,
                 status=self.status,
                 error=self.error,
+                history_exhausted=self.history_exhausted,
+                cache_hit=self.cache_hit,
+                cache_created_at=self.cache_created_at,
+                history_cache_hit=self.history_cache_hit,
                 warnings=list(self.warnings),
                 bars=[bar.chart_data() for bar in self.snapshot()],
             )

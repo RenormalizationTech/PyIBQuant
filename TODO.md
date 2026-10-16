@@ -24,24 +24,28 @@ paper-trading roadmap; displaying trade context does not authorize order placeme
 - [x] Independent Canvas candlesticks, synchronized volume, axes and crosshair OHLCV
 - [x] Wheel zoom, horizontal drag, touch pinch, keyboard navigation and high-DPI resizing
 - [x] Fit data and Latest controls; preserve a panned view during updates
-- [x] Browser symbol, interval and history selection with Load chart/Enter
+- [x] Browser symbol, interval, history and trading-hours selection with Load chart/Enter
+- [x] 2-hour/4-hour and weekly bars; yearly candles aggregated from monthly IBKR bars
 - [x] Loading/errors, retain prior chart on failure, cancel prior subscription on success
 - [x] Self-contained offline HTML snapshots and localhost live chart server
 - [x] Offline provider/session tests and separate browser/integration checks
 
 ## Next milestone: complete chart foundations
 
-Start with the first three items as one small implementation slice.
+Price/time scaling, vertical panning, right space and older-history loading are
+implemented, along with optional Parquet query caching, fixed New York time labels
+and a browser trading-hours selector. Next: session shading and separators.
 
-- [ ] Drag the price axis to scale vertically
-- [ ] Vertical pan with explicit manual/automatic price-scale modes
-- [ ] Autoscale toggle and reset; preserve manual scaling through live updates
-- [ ] Drag the time axis to adjust candle spacing
-- [ ] Configurable space to the right of the latest candle
-- [ ] Load older historical bars when panning left; deduplicate and preserve viewport
-- [ ] Local historical cache to reduce repeat requests (optional Parquet; no database server)
-- [ ] New York/UTC timezone selection with daylight-saving-aware labels
-- [ ] Browser regular/extended-hours toggle, session shading and separators
+- [x] Drag the price axis to scale vertically
+- [x] Vertical pan with explicit manual/automatic price-scale modes
+- [x] Autoscale toggle and reset; preserve manual scaling through live updates
+- [x] Drag the time axis to adjust candle spacing
+- [x] Configurable space to the right of the latest candle
+- [x] Load older historical bars when panning left; deduplicate and preserve viewport
+- [x] Local historical cache to reduce repeat requests (optional Parquet; no database server)
+- [x] Fixed New York display with daylight-saving-aware labels
+- [x] Browser regular/extended-hours selector
+- [ ] Session shading and separators
 - [ ] Improve date ticks across sessions; candle-close countdown
 - [ ] Distinguish connected/subscribed, stale, delayed and live states without guessing entitlements
 - [ ] Display last data-update time and actionable connection errors
