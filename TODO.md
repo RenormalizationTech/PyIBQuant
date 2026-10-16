@@ -6,9 +6,11 @@ For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
 Current priority: on-demand IBKR historical requests for selected options, followed
 by historical-data research and backtesting. Live recording, bulk data collection
-and external data providers are not required workflows. Recording/reconnect tools
-remain optional support. The last code checkpoint passed 388 tests, Ruff and mypy;
-option historical acquisition is the next implementation slice.
+and external data providers are not required workflows. The obsolete recording,
+rotation/replay stack and recorded-quote simulator were removed. Discovery,
+snapshots, independent streams/reconnect and the equity
+research/backtest workflow remain. Cleanup validation: 261 tests, Ruff, mypy and
+an SDK-free wheel smoke check pass. Option historical acquisition is next.
 
 ## Goal and scope
 
@@ -37,8 +39,8 @@ Use IBKR historical requests as the source for options research, within IBKR's
 contract availability and retention limits. Do not require users to collect a live
 archive or subscribe to an external historical-data provider. Keep acquisition
 bounded to a selected contract and requested range, with optional cache/save for
-repeatability. Existing quote recordings/simulations are implemented experiments,
-not the primary product data model.
+repeatability. The recorded-quote experiment was removed; the primary product
+data model uses on-demand IBKR historical inputs.
 
 ## Next — On-demand IBKR option history
 
@@ -49,7 +51,7 @@ not the primary product data model.
 - [ ] Surface expired/unavailable history and permission failures explicitly; no fallback to live recording or fabricated data
 - [ ] Verify a small recent historical request against TWS, including when the exchange is closed
 - [ ] Provide an offline research example from the returned historical input
-- [ ] Add a historical-bar option backtest with explicit timing/cost assumptions, separate from receipt-based quote replay
+- [ ] Add a historical-bar option backtest with explicit timing/cost assumptions appropriate to the input bars
 - [ ] Expand research/performance analytics and a reproducible research-to-backtest report
 
 Acceptance: request a selected option's available intraday history from IBKR on
@@ -57,7 +59,8 @@ demand, then inspect/analyze saved inputs without a chart, live recorder or an
 ongoing broker connection. The API does not promise expired options, option EOD
 history, historical chain reconstruction or historical contract Greeks. Preserve
 TRADES/MIDPOINT/BID/ASK semantics; do not treat BID_ASK aggregates as an atomic quote.
-The existing recorded-quote simulator requires different inputs and remains separate.
+The previous recorded-quote simulator was removed; the historical-bar option engine
+will be implemented separately from equity simulation.
 
 ## Python research data workflow
 
@@ -85,12 +88,9 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Optional entry/exit and performance visualizations
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
-Live-session option capture and offline simulation were verified on 2026-10-16.
-The recorded-quote experiment and rotation/replay are implemented and verified.
-The current direction supersedes recordings as the primary options backtest input:
-prioritize on-demand IBKR option history and historical research/backtesting.
-Keep paper execution separate; the simulator does not submit orders or model account
-settlement, dividends, taxes, liquidity or historical nominal-share execution.
+Equity backtesting remains implemented and verified. The recorded-quote options
+experiment was removed during scope cleanup; historical option acquisition and
+historical-bar option simulation are the next slices. Keep paper execution separate.
 
 ## Stock/option quote foundation
 
@@ -108,27 +108,9 @@ settlement, dividends, taxes, liquidity or historical nominal-share execution.
 - [ ] Optional SPY retry after resolving its 10091 SPY ARCA/TOP/ALL permission message
 - [x] Grouped option-chain discovery with explicit, unverified candidate selection
 - [x] Independently owned continuous stock/option quote subscriptions and consumer cursors
-- [x] Sampled JSONL recording, integrity checks, partial-status handling and SDK-free replay
-- [x] Frozen AAPL discovery → selected stream → recording → offline replay verified via TWS
-- [x] Initial recorded-quote backtest experiment (superseded as the primary workflow by on-demand IBKR history)
-- [x] SDK-free intraday long/flat option simulator with later-sample ask/bid fills
-- [x] Recorded multiplier, displayed-size/cash checks, configurable costs/latency/receipt age/skew
-- [x] Reject frozen/delayed/excessively gapped/overnight/expiry inputs; expose unpriced positions
-- [x] Hand-checked accounting/causality tests and offline example with input/JSON/CSV exports
-- [x] Collect confirmed-live intraday AAPL observations and verify capture-to-offline simulation (2026-10-16)
-- [x] Explicit side-update freshness policy with original price clocks, matching live tick families and post-signal size confirmation
-- [x] Simulated round-trip entry/exit accounting verified on both live recordings with the explicit side-update policy
-- [ ] Broaden live valuation coverage; asynchronous/quiet sides can still leave marks unknown
-- [x] Opt-in quote reconnect with exact contract identity, empty replacement generations and persistent gap history
-- [x] Version 2 recording/replay continuity checks, legacy version 1 loading, cross-gap backtest rejection
-- [x] After-hours frozen quote-recovery integration check (own socket only; new fields, gap history, cancellation and simulation rejection)
-- [ ] Optional confirmed-live quote-recovery check (deferred; does not gate historical research)
-- [x] Exclusive sample-count recording rotation with checksummed, ordered segment manifest
-- [x] Prevalidated disk-backed single-file/set replay and bounded-memory quality summaries
-- [x] Cross-segment identity/sequence/gap checks; corruption, missing-file, partial-state and memory tests
-- [x] After-hours frozen rotating capture → offline set replay verified against TWS
-- [ ] Optional recorded-quote streaming simulation/multi-file export (deferred)
-- [ ] Closed-file resume/restart recovery (separate from reconnecting an open stream)
+- [x] Opt-in quote reconnect with exact contract identity, empty replacement generations and gap history
+- [x] Frozen quote recovery verified against TWS (independent of the historical research workflow)
+- [x] Remove superseded recording/rotation/replay stack, recorded-quote simulator and generated test recordings
 - [ ] Chart bid/ask display
 - [ ] Richer liquidity models and expiry/exercise/assignment semantics within the supported data scope
 

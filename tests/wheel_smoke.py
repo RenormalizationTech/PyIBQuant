@@ -17,9 +17,7 @@ from pyibquant import (
     Option,
     OptionChain,
     OptionChainGroup,
-    QuoteRecording,
     QuoteStream,
-    record_quotes,
 )
 from pyibquant.backtest import backtest_equity
 from pyibquant.data.history import normalize_range
@@ -59,10 +57,10 @@ with TemporaryDirectory() as directory:
     with QuoteStream(state, lambda: state.finish('closed')) as stream:
         state.tick(1, 100)
         state.tick(2, 102)
-        recording = QuoteRecording.load(record_quotes(
-            stream, Path(directory) / 'quotes.jsonl', duration=.001,
-        ))
-        assert recording.complete and recording.quality()['with_bid_ask'] == 1
+        quote = stream.latest()
+        assert quote.bid == 100 and quote.ask == 102 and quote.spread == 2
+        assert stream.wait_for_update(0, timeout=0).sequence == quote.sequence
+    assert stream.closed
     html = bars.plot(Path(directory) / 'chart.html', open_browser=False).read_text()
     assert 'class MarketChart' in html
     assert 'function freshness' in html

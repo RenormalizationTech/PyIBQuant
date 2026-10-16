@@ -34,14 +34,11 @@ daily equity backtest now handles prior-close targets, next-open fills, fixed
 whole-share sizing, configurable costs and performance accounting. The options
 pilot includes stock/explicit-option Level-one snapshots, with stock
 feed verification and frozen AAPL option bid/ask/model IV/Greeks verified against
-TWS. Grouped option discovery, independently owned quote streams and sampled
-recording/offline replay are now implemented and verified with frozen AAPL data.
-The initial options backtest experiment used collected recordings; the current
-primary direction is on-demand IBKR historical requests. An offline
-intraday simulator now uses later observed ask/bid fills, costs, recorded multipliers
-and explicit freshness/size checks. In-session live capture and offline simulation
-were verified on 2026-10-16, including conservative skipped fills and unknown
-valuations when price receipts age despite size/Greek updates.
+TWS. Grouped option discovery and independently owned quote streams with opt-in
+reconnect are implemented and verified with frozen AAPL data.
+The recorded-quote options experiment and its recording/replay infrastructure have
+been removed to keep the software focused on on-demand IBKR history. Next:
+selected-option historical acquisition, research and a historical-bar backtest.
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
@@ -107,15 +104,14 @@ stock or every contract has a multiplier of one.
 Current user direction: options research and backtesting should request available
 historical data on demand from IBKR, just as equities do. Do not require live
 recording, large-scale collection or an external historical provider. Existing
-stock/option snapshots, streaming and recorded-quote simulations remain optional
-support; their further scaling and live checks do not gate research.
+stock/option snapshots and independent streaming remain supporting capabilities; their further scaling and live checks do not gate research.
 
 The next slice is explicit-contract intraday option history with bounded queries,
 price-data type, preserved contract identity/multiplier and honest availability.
 Reuse the existing historical downloader where appropriate, then build financial
 research and a bar-based options backtest with explicit execution assumptions.
-Do not feed historical bars to the receipt-based recorded-quote simulator or invent
-sizes/Greeks/receipt timestamps. Current chain discovery is not a historical
+The removed recorded-quote simulator is not the historical backtest model; do not
+invent sizes/Greeks/receipt timestamps for historical bars. Current chain discovery is not a historical
 point-in-time chain. Expired options and option EOD history are outside IBKR's
 available historical scope; unavailable inputs should fail clearly.
 
@@ -1359,7 +1355,7 @@ IBKR API objects
 The existing provider boundary, immutable `Bar` values, `BarSeries.snapshot()`,
 UTC/date normalization and optional chart imports are useful foundations. Keep
 those pieces. The prototype now includes research datasets, daily equity backtests
-and intraday recorded-option simulations. It has no broker trading-control API.
+and independent quotes. It has no broker trading-control API or options backtest.
 Preserve the implemented boundaries and address the remaining ones incrementally:
 
 - Implemented: research requests skip session enrichment by default;
@@ -1379,8 +1375,8 @@ Preserve the implemented boundaries and address the remaining ones incrementally
   events, event time/order, historical replay and partial-bar policies before
   sharing signals between backtest and live use. Browser polling/countdowns are
   presentation only and must not drive strategy execution.
-- Frozen `BarDataset` files and `QuoteRecording` files provide independent offline
-  inputs with integrity checks and fingerprints. Keep these research inputs
+- Frozen `BarDataset` files provide independent offline research inputs with
+  integrity checks and fingerprints. Keep these inputs
   separate from the exact-query cache, which remains an acquisition optimization
   rather than a merged historical research database.
 - Add a separate broker execution component for order IDs, acknowledgements,
@@ -1464,7 +1460,8 @@ calculations and backtests consume collected datasets; they must not depend on a
 open chart or a continuously connected broker. Data acquisition still requires
 the user's IBKR setup and permissions. Data/research APIs above are implemented;
 the daily backtest engine and basic performance accounting above are implemented.
-The first intraday recorded-option simulation is also implemented (section 35).
+The recorded-quote option simulator was removed; the historical-bar option engine
+is planned after IBKR option history is available.
 Portfolio simulation, broader option lifecycle models and broker controls remain planned.
 
 ---
@@ -1484,94 +1481,32 @@ Broader live fill/valuation checks and execution prerequisites remain before bro
 
 ---
 
-# 35. Options Pilot and Later Expansion
+# 35. Options Foundation and Historical Research
 
-Implemented first step: `Market.quote()` returns an immutable Level-one snapshot
-using reqMktData with regulatory snapshots disabled. Stocks and explicit US
-equity/ETF option selectors are supported; ambiguous contracts are rejected and
-actual multipliers retained. Requested/reported feed type, delayed tick IDs,
-local receipt times, missing/crossed quotes and partial entitlements remain
-explicit. Available bid/ask/last/model computations are kept separately.
-Stock live verification passed. The selected SPY 2026-11-20 770 C contract
-resolved but returned error 10091 (SPY ARCA/TOP/ALL) without bid/ask/Greeks. The
-user then selected AAPL 2026-11-20 340 C: its frozen snapshot returned bid/ask
-and model IV/Greeks with confirmed frozen feed type. The overnight live request
-returned no prices; subsequent in-session live streams returned bid/ask, sizes
-and model IV/Greeks on 2026-10-16. SDK-normalized None
-Greeks and unset Decimal sizes are now handled without disconnecting or inventing
-large sizes. No subscription or account settings were changed.
-The following foundation is now also implemented:
+Implemented: explicit Option selectors, exact stock/option contract resolution,
+immutable quote snapshots with requested/reported feed type and available IV/Greeks,
+grouped option-chain discovery, and independently owned quote streams. Stream
+reconnect preserves ownership/cursors, clears accumulated fields and retains gap
+history. Frozen acquisition and reconnect passed explicit TWS checks. These tools
+remain useful for contract selection/inspection and future strategy feeds.
 
-- `Market.option_chain()` uses reqSecDefOptParams and preserves exchange, trading
-  class and multiplier partitions. Expiry/strike sets describe candidates, not
-  guaranteed combinations; selected options still resolve exactly before quoting.
-- `Market.stream_quote()` provides independent subscription handles, immutable
-  observations and per-consumer sequence cursors. No browser polling or user/file
-  callback runs on the IBKR reader thread. Mixed requested feed modes on a single
-  active connection are rejected. Disconnects end default handles; opt-in
-  `reconnect=True` restores exact resolved contracts in empty generations with
-  persistent gap history and new feed confirmation. Permission failures stay terminal.
-  Local and after-hours frozen recovery checks pass; confirmed-live recovery
-  verification awaits an open trading session.
-- `record_quotes()` samples on the caller's thread, preserves field receipt times
-  and records unchanged observations. Versioned JSONL includes identity, sampling
-  and feed provenance, a completion/error footer and integrity digest.
-  `QuoteRecording.load()` replays without SDK/optional dependencies; incomplete
-  input requires opt-in and checksum failures are rejected. Quality reports do
-  not certify executable quotes or exchange quote age.
+Removed: sampled JSONL recording, rotating capture, disk-backed recording replay,
+receipt-based option simulation and their dedicated examples/tests. These were an
+experimental branch of the workflow; Git commit `59da0e5` preserves the source.
+Their generated recording/test datasets were removed during scope cleanup.
 
-AAPL verification returned 41 chain groups and recorded 12 frozen observations,
-10 with bid/ask and 9 with model IV/delta. This verifies acquisition/recording,
-not an exchange tick archive or live trading-session coverage. Live capture and
-simulation were subsequently verified as recorded below. Quote reconnect is now
-implemented with local and frozen TWS checks; chart bid/ask enrichment and historical
-imports remain planned.
-The initial experiment used collected recordings. The current user direction
-supersedes this as the primary workflow: request selected option history from IBKR
-on demand, then research/backtest the returned historical data.
+Next: request one selected unexpired option's available intraday historical bars
+on demand from IBKR. Preserve exact contract identity/multiplier, source type,
+range/coverage and query-specific caching. Reuse historical paging/pacing without
+stock-only assumptions, and verify a small request against TWS. Add financial
+research calculations and a historical-bar options backtest with explicit
+execution/cost assumptions. No live recorder or huge local collection is required.
 
-`pyibquant.option_backtest.backtest_option()` is now a standard-library intraday
-long/flat simulator for one resolved option. Boolean targets act only at a later
-sample with a new side-price receipt after the signal and configurable latency.
-Buys use ask plus slippage, sells bid minus slippage; costs are per contract and
-actual recorded multipliers are retained. Local receipt age/skew and displayed
-size gate fills; no borrowing or partial fills. Unchanged targets preserve pending
-intents. Unpriced open positions remain unknown rather than forward-filled.
-Only complete, confirmed-live, same-New-York-date recordings strictly before
-expiry qualify; frozen/delayed data, excessive sample gaps and terminal states
-are rejected. Initial unknown-feed samples are ineligible. This does not model
-exchange quote age, queue priority, market impact or guaranteed liquidity.
-`examples/backtest_option.py` runs hold-window or spread-filter demonstrations
-and exports exact input bytes, input-fingerprinted results/assumptions, strategy settings
-and fill/trade/skip/equity CSV logs without TWS/SDK/optional dependencies.
-Live intraday recordings and offline replay were verified on 2026-10-16; frozen
-AAPL data remains diagnostic replay input. Further live fill/valuation/reconnect
-checks are optional and deferred behind on-demand historical options work.
-An explicit `quote_age_basis="side_update"` policy now uses matching live size
-receipts at/after each side's price, without rewriting price timestamps. It retains
-post-signal causality, size/age/skew checks and the original strict default. Both
-live recordings produced a complete simulated round trip under that explicit
-policy, with some intermediate valuations/drawdown still unknown. New recording
-format version 2 retains gap/generation history and loads legacy version 1 inputs;
-the simulator rejects reconnect gaps. Exclusive sample-count rotation now writes
-independently checked segments and an atomic manifest. Prevalidated disk-backed
-single-file/set readers check full input integrity, cross-segment identity, ordering
-and gap history without retaining all samples. Frozen rotating capture/replay and
-own-socket recovery passed against TWS after hours. Individual rotation segments
-are not full-session simulator inputs. Closed-file resume, streaming recorded-quote
-simulation and multi-file simulation exports are optional/deferred. Exercise, assignment, overnight carry and
-settlement remain outside this initial simulator.
-
-
-Options trading/backtesting is an explicit product priority. After the shared
-research/equity-backtest foundation, introduce a stock/option quote API and an
-options pilot with contract discovery, bid/ask/spread, available IV/Greeks and
-selected quote collection. This can precede broad-market monitoring; the phase
-catalog above does not require implementing scanners before the options pilot.
-
-Full options backtesting follows suitable historical datasets, fill/cost models,
-contract multipliers and expiry/exercise/assignment behavior. Broad universes,
-advanced surfaces and chart workspaces follow concrete workflow needs.
+The current source does not yet implement historical option requests or an option
+backtest. IBKR's history limitations define the scope; expired-option history,
+option EOD history, historical chain reconstruction and contract Greeks are not
+promised. Paper execution, exercise/assignment, multi-leg models and broad surfaces
+remain later work driven by supported research requirements.
 
 ---
 

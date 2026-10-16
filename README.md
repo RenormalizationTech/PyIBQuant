@@ -7,8 +7,8 @@ The main product is a usable Python API for the research-to-trading workflow.
 Charts help inspect data, signals and results. Live IBKR access requires a manually
 installed `ibapi`, a running and logged-in TWS or IB Gateway, and the account and
 market-data permissions needed for the requested instruments. Implemented features
-include market data, frozen datasets, research calculations, daily equity and
-intraday recorded-option backtests, quote recording/replay, and interactive charts.
+include market data, frozen datasets, research calculations, daily equity
+backtests, stock/option quotes and interactive charts.
 Broker-connected algorithmic execution remains planned.
 
 ## Project documents
@@ -28,10 +28,10 @@ external historical-data providers are outside the current scope.
 
 Equity/ETF historical queries, paging/pacing, exports, frozen datasets and simple
 returns/SMA research are implemented, together with a first daily equity backtest.
-Option discovery, snapshots, quote recording/replay and an experimental recorded-
-quote simulator are also implemented. Those recording tools remain optional
-supporting capabilities. Their live reconnect check is not a prerequisite for
-historical research, and paper execution remains a later milestone.
+Option discovery, snapshots and independent quote streams/reconnect are also
+implemented. The superseded recording/replay stack and recorded-quote option
+simulator have been removed. Historical option acquisition and a historical-bar
+option backtest remain the next implementation tasks; paper execution comes later.
 
 **Next:** extend historical acquisition to explicitly selected option contracts,
 with a short intraday interval, fixed start/end bounds and explicit price-data type
@@ -68,7 +68,7 @@ live bar updates. This is the initial market-data slice of [the plan](PROJECT_PL
 
 Python 3.11+ is required. Live IBKR access additionally requires a running,
 logged-in TWS or IB Gateway and the manually installed SDK described below.
-Saved-dataset research and recorded-quote backtests run offline without that setup.
+Saved-dataset research and equity backtests run offline without that setup.
 
 ```sh
 python3 -m venv .venv
@@ -425,288 +425,55 @@ python tests/live_quotes_check.py --symbol AAPL
 ```
 
 Pass `--expiry YYYY-MM-DD --strike NUMBER --right C` (or P) to inspect an explicit
-option. Discovery, streaming and sampled recording are described below. Chart
+option. Discovery and independent quote streaming are described below. Chart
 bid/ask display and historical quote imports remain future work. Snapshot calls
 serialize on a connection because IBKR's requested feed type is connection-wide;
 they do not hold the Market control lock while waiting. Disconnects fail the
 snapshot instead of silently repeating it. Historical bar recovery is unchanged.
 
-### Option discovery, streaming and sampled research recordings
+### Option discovery and independent quote streams
+
+`Market.option_chain()` discovers grouped expiry/strike candidates. Groups preserve
+exchange, trading class and multiplier; candidate sets do not guarantee that every
+expiry/strike pair exists. Selected contracts still resolve exactly before quoting.
 
 ```python
 from datetime import date
-from pyibquant import Market, QuoteRecording, record_quotes
+from pyibquant import Market
 
-with Market.ibkr(timeout=30) as market:
+with Market.ibkr() as market:
     chain = market.option_chain("AAPL")
-    for group in chain.groups:
-        print(group.exchange, group.trading_class, group.multiplier,
-              group.expirations, group.strikes)
     option = chain.select(date(2026, 11, 20), 340, "C",
                           trading_class="AAPL", multiplier=100)
-    # Frozen is explicit for this overnight example. Select live for live research.
-    with market.stream_quote(option, market_data_type="frozen") as stream:
-        path = record_quotes(stream, "charts/quotes/aapl-samples.jsonl",
-                             duration=10, interval=1)
-
-# Replay without TWS, ibapi, pandas or PyArrow.
-recording = QuoteRecording.load(path)
-print(recording.quality())
-for sample in recording.samples():
-    print(sample["sampled_at"], sample["quote"]["bid"], sample["quote"]["ask"])
+    with market.stream_quote(option) as stream:
+        quote = stream.latest()
+        newer = stream.wait_for_update(quote.sequence, timeout=5)
+        print(newer.status, newer.market_data_type, newer.bid, newer.ask)
 ```
 
-`option_chain()` resolves the US stock/ETF underlying, then requests definitions
-with `reqSecDefOptParams`. It keeps exchange/trading-class/multiplier partitions
-separate, with sorted expiry and strike sets. It does not request quotes or build
-an exhaustive Cartesian product. `chain.select()` creates a candidate from exactly
-one matching SMART group. A listed expiry and strike do **not** prove their
-combination exists; quote/stream requests resolve the selected contract before
-subscribing. Ambiguous groups require explicit trading class/multiplier. See
-IBKR's [chain definition caveat](https://interactivebrokers.github.io/tws-api/options.html).
+`stream_quote()` returns before fields are available and uses standard reqMktData,
+never a regulatory snapshot. Close the handle explicitly or use its context
+manager; cancellation affects only that subscription. Chart navigation does not
+own these streams. Consumers keep independent monotonic sequence cursors; callbacks
+may coalesce, so this is not a tick archive. Quotes are immutable accumulated
+observations, with local callback receipts rather than exchange timestamps.
+An active stream does not certify a complete, live or executable bid/ask.
 
-`stream_quote()` uses `reqMktData(snapshot=False, regulatorySnapshot=False)` and
-returns before fields are available. Each handle owns its subscription; closing
-it cancels only that request, and chart selection/cancellation does not own it.
-The Market context closes all its remaining subscriptions. `stream.latest()`
-returns an immutable accumulated observation with `streaming=True`, `sequence`,
-`observed_at`, status and error. `active` means callbacks have arrived, not that a
-complete, live or tradable bid/ask exists. Check fields and reported feed type.
+Default handles end on disconnect. Opt-in `reconnect=True` on the stream requires
+the default Market recovery supervisor. It restores the exact resolved contract,
+clears prices/sizes/Greeks/feed confirmation and increments the generation. Gap
+history remains visible even if a consumer misses the disconnected state. New
+callbacks and feed confirmation are required after replacement; gap end means the
+request was issued, not that data continuity or availability has been established.
+Terminal data/permission errors are not retried. Closing prevents resurrection.
+All active quote streams on a connection must request the same data mode.
 
-While the stream context is open, independent consumers can wait using their own cursors:
-
-```python
-observation = stream.latest()
-newer = stream.wait_for_update(observation.sequence, timeout=5)
-if newer.sequence > observation.sequence:
-    print(newer.status, newer.bid, newer.ask)
-```
-
-Timeout returns the current observation, possibly with the same sequence.
-Intermediate callbacks can coalesce; this API is not a tick-by-tick queue.
-Closing, terminal permission errors and disconnects wake waiters. The first
-terminal cause is retained. By default, disconnects end a quote handle. Opt into
-`market.stream_quote(option, reconnect=True)` to let the Market recovery supervisor
-restore the same handle and exact resolved contract. This requires the default
-`Market.ibkr(reconnect=True)` supervisor. Connection loss immediately clears prices,
-sizes, Greeks and feed confirmation. Each replacement subscription starts a new
-`generation` and must receive fresh fields and a new feed-type confirmation.
-Sequence cursors remain monotonic. `gaps` retains the start/reason, previous
-generation, and replacement-subscription time/new generation, even if disconnect
-and recovery fall between samples. Gap end means a new request was issued, not
-that quotes are available or exchange continuity is restored. Terminal data or
-permission failures are not retried. Closing a handle during recovery prevents
-resubscription and cancels only that handle. Active streams on one connection
-must request the same feed mode; conflicting snapshot/stream modes fail before
-changing it. Use separate Market connections for simultaneous different modes.
-
-`record_quotes()` samples on the calling thread, keeping file IO outside IBKR's
-callback thread. It records unchanged observations too, retaining their original
-field receipt times. Files are exclusive by default; `overwrite=True` is explicit.
-The versioned JSONL contains contract/feed/sampling metadata, observations and a
-footer with sample count, completion status and SHA-256 integrity check. This is
-a collection of sampled local observations, **not a complete exchange tick archive**.
-`complete` means the recording timer finished, not that all fields were available,
-all ticks were captured, or prices were fresh/executable. Local sample, observation
-and callback receipt times do not establish exchange quote age.
-
-Interrupted/failed/closed streams and missing footers require
-`QuoteRecording.load(path, allow_incomplete=True)` for inspection. A final truncated
-line may be recovered in that mode; checksum failures are always rejected. Replay
-returns independent JSON records. `quality()` reports bid/ask availability, crossed
-pairs, delayed/frozen/unknown feed counts and model IV/delta availability without
-certifying execution prices. New recordings use format version 2 and retain full
-generation/gap history in each observation; version 1 recordings still load.
-Replay rejects generation rollback, revised/erased observed gaps and pre-gap fields
-carried into a replacement generation. A duration ending while disconnected is
-incomplete. Opt-in quote recovery can continue recording in the same open file;
-sample-count rotation and disk-backed replay are described below. Resuming a
-closed file remains planned.
-The first options simulator rejects every recording with a reconnect gap, including
-recordings started after recovery; cross-generation simulation is not modeled.
-
-### Rotating capture and disk-backed replay
-
-Single-file recordings can be validated and inspected without loading every sample:
-
-```python
-from pyibquant import QuoteRecording
-
-with QuoteRecording.open("charts/quotes/aapl.jsonl") as replay:
-    print(replay.metadata(), replay.fingerprint())
-    for row in replay.samples():
-        print(row["sampled_at"], row["quote"]["bid"])
-```
-
-`open()` makes a complete validation pass before returning the reader. Each
-`samples()` call makes another checked pass through the same open file; path
-replacement cannot substitute different inputs. Readers retain one sample and its
-gap history, rather than all samples. Returned rows/metadata are independent
-copies. `quality()` also uses bounded sample memory. Use a context manager and
-one active iterator per reader. Do not modify inputs in place; exhaust iterators
-to detect changes during replay. `load()` remains the immutable in-memory API.
-Both readers support explicit `allow_incomplete=True` diagnostic inspection and
-reject checksum failures. Prevalidation is a full scan, not instant random access.
-
-For longer capture, rotate into a new directory at sample-count boundaries:
-
-```python
-from pyibquant import QuoteRecordingSet, record_quotes_rotating
-
-# Inside the caller-owned stream context:
-manifest = record_quotes_rotating(
-    stream, "charts/quotes/new-recording", duration=3600, interval=.5,
-    max_samples=10_000,
-)
-# Offline, after the stream and Market have closed:
-with QuoteRecordingSet.open(manifest) as replay:
-    print(len(replay), replay.quality())
-    for row in replay.samples():
-        process(row)  # Your analysis; no broker connection is used.
-```
-
-The directory must not already exist. Capture writes numbered JSONL segments with
-independent integrity footers and predecessor hashes, then atomically publishes
-`recording.json` after a graceful finish. Sample timing, identity, feed labels,
-sequence cursors and reconnect history continue across rotation. File lengths
-vary with row size; `max_samples` limits sample count, not bytes. No overwrite,
-pruning, closed-file resume or restart recovery is implied. An IO error or crash
-leaves diagnostic segment files without a successful manifest. Graceful terminal
-states publish an explicitly incomplete manifest requiring opt-in inspection.
-A missing/corrupt segment always fails, even with `allow_incomplete=True`.
-
-`QuoteRecordingSet.open()` validates the manifest and every segment before yielding
-samples. It checks exact segment bytes, order, counts, contract/feed identity and
-continuity at segment boundaries, then rechecks them during iteration. Memory is
-bounded by the largest sample/gap history plus one manifest descriptor per segment.
-The fingerprint identifies the complete logical session. Segment footers certify
-segment completion, not completion of the whole session; the options simulator
-rejects individual rotated segments. Its CLI still consumes single-file inputs;
-streaming simulation and export of multi-file simulation inputs remain future work.
-
-```sh
-python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --market-data-type frozen --duration 60 --interval .5 --max-samples-per-file 20
-python examples/replay_quotes.py "charts/options-research/<run>/quotes.jsonl"
-python examples/replay_quotes.py "charts/options-research/<run>/recording/recording.json" --recording-set
-python tests/live_quote_recovery_check.py --market-data-type frozen
-```
-
-After-hours TWS checks on 2026-10-16 passed: 120 sampled observations across one
-socket reconnect with confirmed frozen fields after recovery, and a separate
-12-sample recording split into three four-sample files with offline set replay.
-Frozen checks verify acquisition/lifecycle only; frozen data remains ineligible
-for the options simulator. Run the default live recovery check during an open
-session to verify confirmed-live recovery separately.
-
-The runnable example discovers a chain alone, or records one selected contract:
-
-```sh
-python examples/options_research.py AAPL
-python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --trading-class AAPL --multiplier 100 --market-data-type frozen --duration 10
-```
-
-Each run creates a timestamped directory under ignored `charts/options-research/`.
-`python tests/live_options_research_check.py` verified 41 AAPL chain groups and a
-six-second recording of the selected call: 12 samples, 10 with bid/ask and 9 with
-model IV/delta, with confirmed frozen feed labels. In-session live capture and offline simulation
-were subsequently verified on 2026-10-16; historical option imports remain planned. Frozen samples
-are not historical live trading observations.
-
-### First options backtest from our recordings
-
-The first options simulator uses our collected recordings, as chosen for this
-project. It runs offline with the standard library; no backtesting package,
-TWS connection or SDK is required:
-
-```python
-from pyibquant import QuoteRecording
-from pyibquant.option_backtest import backtest_option, hold_window
-
-recording = QuoteRecording.load("charts/quotes/live-aapl.jsonl")
-targets = hold_window(recording, seconds=30)  # Demonstration, not a trading recommendation.
-result = backtest_option(recording, targets, initial_cash=10000, contracts=1,
-                         commission=1, slippage_bps=5, max_quote_age=2,
-                         max_side_skew=1, max_gap=5, latency=0)
-print(result.metrics())
-result.save("charts/option-backtest/results.json")
-```
-
-For a new live recording, run this during the selected option's trading session
-with logged-in TWS and the appropriate existing data permissions:
-
-```sh
-python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --trading-class AAPL --multiplier 100 --market-data-type live --duration 60 --interval .5
-python examples/backtest_option.py "charts/options-research/<run>/quotes.jsonl" --hold-seconds 30 --commission 1 --slippage-bps 5
-```
-
-Replace `<run>` with the directory printed by the recorder. The offline example
-also supports `--strategy spread-filter --max-spread-fraction .05`. These two
-strategies demonstrate simulation mechanics, not expected profitability. It
-exports the exact input recording, its content fingerprint, strategy settings,
-results/assumptions JSON and fills/trades/skipped-fills/equity CSV files. Reuse
-`result.signals` for the exact recorded targets. Custom signals must contain one
-boolean per sample and use only information available at that observation.
-
-The model holds a fixed whole-contract long position or stays flat. A signal
-becomes active after its sample. A pending intent can fill only at a later sample,
-after the configured latency and a side-price receipt newer than the signal.
-Unchanged targets preserve the pending intent; changed targets replace or cancel
-it after the current observation is processed. Buys use ask plus adverse slippage,
-sells bid minus adverse slippage; commissions apply per contract per fill. It uses
-the recorded contract multiplier, checks available cash and displayed side size,
-and skips whole fills when quotes are missing, crossed, stale or asynchronous.
-There are no partial fills, shorting, borrowing or forced final exit.
-
-Inputs must be complete recordings of one resolved option on one New York date
-strictly before expiry. Frozen/delayed data, terminal stream states, nonincreasing
-times and gaps beyond `max_gap` are rejected. Initial unknown-feed observations
-are ineligible; confirmed live observations are required. Both prices and both
-size receipt clocks must pass age/skew checks. These local clocks cannot establish
-exchange quote age, and displayed size does not guarantee a fill or model queue
-priority, market impact or book depletion.
-
-Open positions are marked at a qualifying bid without an estimated exit fee.
-An unavailable valuation stays `None`; period returns across it and full-path
-drawdown remain unknown. An eventual valid final mark can restore final return,
-while `valuation_complete` remains false. Exercise, assignment, expiry payoff,
-overnight carry, settlement, interest and taxes are outside this first model.
-Hand-calculated and causal offline tests pass. Live-session recording and offline
-simulation were also verified on 2026-10-16. Unchanged bid/ask prices can exceed
-the receipt-age limit despite ongoing size/Greek updates, blocking fills and
-leaving held positions unpriced; the checks are not relaxed for validation. Existing frozen AAPL recordings are rejected
-as backtest inputs and remain available for diagnostic replay.
-
-### Explicit unchanged-price side updates
-
-IBKR can send a size callback without repeating an unchanged price, as documented
-in [IBKR streaming data](https://www.interactivebrokers.com/docs/tws-api/doc/md/streaming-data).
-The default `quote_age_basis="price_receipt"` preserves the original simulator's
-requirement for recent price/size receipts and a new side-price receipt after the
-signal. Select `quote_age_basis="side_update"` explicitly to use matching live IBKR
-bid/ask size callbacks at or after each side's recorded price. Both sides must
-have recent size confirmations within `max_side_skew`; a new price waits for its
-following size callback. Missing prices, mismatched tick families, zero/insufficient
-side size, delayed/frozen feeds, latency and reconnect-gap checks still apply.
-Only a later execution-side size receipt can satisfy a pending signal. Last-trade,
-opposite-side and Greek updates cannot renew that side. Original price receipts
-are preserved; neither policy establishes exchange quote age or executable liquidity.
-
-```sh
-python examples/backtest_option.py "charts/options-research/<run>/quotes.jsonl" --hold-seconds 30 --commission 1 --slippage-bps 5 --quote-age-basis side_update
-python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --market-data-type live --duration 60 --reconnect
-python tests/live_quote_recovery_check.py
-```
-
-Result schema version 2 records `quote_age_basis` and each fill's `side_received_at`
-alongside unchanged `price_received_at` and `size_received_at`; CSV exports include
-all three clocks. On the two 2026-10-16 live AAPL recordings, the explicit
-side-update policy completed one simulated round trip each, net -38.4125 and
--32.42 with commission 1 and 5 bps adverse slippage. Some intermediate valuations
-remained unknown, so full-path drawdown is still unknown. These short demonstration
-runs validate mechanics, not strategy performance. The strict default still blocks
-both exits. Quote recovery has local coverage and passed an after-hours check with
-confirmed frozen fields on 2026-10-16 after market-data access was restored.
-Confirmed-live recovery verification remains pending for an open trading session.
+Option discovery/snapshots and frozen quote recovery passed explicit TWS checks.
+These supporting tools do not gate historical research. The recording-specific
+JSONL APIs, rotation/replay examples and recorded-quote options simulator were
+removed during scope cleanup; their implementation history is recoverable from
+Git commit `59da0e5`. Only the equity backtest is currently implemented. The next
+options slice requests historical data directly from IBKR.
 
 ### HTML snapshot
 
@@ -981,8 +748,7 @@ The SDK-free subset runs without `ibapi`:
 python -m pytest \
   tests/test_core.py tests/test_cache_core.py tests/test_exports.py \
   tests/test_pacing.py tests/test_research.py tests/test_dataset.py \
-  tests/test_backtest.py tests/test_quote_core.py tests/test_option_core.py \
-  tests/test_quote_recording.py tests/test_option_backtest.py
+  tests/test_backtest.py tests/test_quote_core.py tests/test_option_core.py
 ```
 
 Development checks run locally with the manually installed IBKR Python API.
