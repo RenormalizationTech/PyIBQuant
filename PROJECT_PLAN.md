@@ -31,8 +31,8 @@ Fixed-range data queries, basic dataset metadata and a returns/SMA research
 example are now implemented with offline and live TWS validation. Frozen dataset
 save/reload and explicit calendar/finality comparison are also implemented. A first
 daily equity backtest now handles prior-close targets, next-open fills, fixed
-whole-share sizing, configurable costs and performance accounting. Next prioritize
-the options pilot: stock/explicit-option Level-one snapshots now work, with stock
+whole-share sizing, configurable costs and performance accounting. The options
+pilot includes stock/explicit-option Level-one snapshots, with stock
 feed verification and frozen AAPL option bid/ask/model IV/Greeks verified against
 TWS. Grouped option discovery, independently owned quote streams and sampled
 recording/offline replay are now implemented and verified with frozen AAPL data.
@@ -1351,14 +1351,16 @@ IBKR API objects
 
 The existing provider boundary, immutable `Bar` values, `BarSeries.snapshot()`,
 UTC/date normalization and optional chart imports are useful foundations. Keep
-those pieces. The current prototype is a market-data implementation; it has no
-backtest engine or trading-control API yet. Address these boundaries incrementally:
+those pieces. The prototype now includes research datasets, daily equity backtests
+and intraday recorded-option simulations. It has no broker trading-control API.
+Preserve the implemented boundaries and address the remaining ones incrementally:
 
 - Implemented: research requests skip session enrichment by default;
   `include_sessions=True` opts in. Charts enable it explicitly. Records/CSV exports
-  and optional pandas DataFrames provide independent snapshots. Keep complete
-  explicit dataset bounds/basic metadata are also implemented. Dataset reload,
-  calendar gap audits and completed-bar policies remain future work.
+  and optional pandas DataFrames provide independent snapshots. Explicit dataset
+  bounds/basic metadata, frozen reload, caller-supplied calendar audits and finality
+  assertions are implemented. Automatic finality certification and completed-bar
+  strategy events remain future work.
 - Fixed-range downloads now release the Market control lock and fail with partial
   data if their provider generation disconnects. Subscription cancellation stays
   responsive. Legacy lookback loads/recovery still serialize operations; future
@@ -1370,10 +1372,10 @@ backtest engine or trading-control API yet. Address these boundaries incremental
   events, event time/order, historical replay and partial-bar policies before
   sharing signals between backtest and live use. Browser polling/countdowns are
   presentation only and must not drive strategy execution.
-- Explicit bounds and basic instrument/source/session/adjustment metadata are
-  implemented. Add dataset reload, calendar/finality audits and frozen-input
-  provenance for reproducible backtests. The exact-query cache is not yet a
-  research dataset store or an offline data-loader API.
+- Frozen `BarDataset` files and `QuoteRecording` files provide independent offline
+  inputs with integrity checks and fingerprints. Keep these research inputs
+  separate from the exact-query cache, which remains an acquisition optimization
+  rather than a merged historical research database.
 - Add a separate broker execution component for order IDs, acknowledgements,
   partial fills, positions, reconciliation and user controls. The current
   data-only reconnect/resubscribe path must not be reused to resubmit orders.
@@ -1418,7 +1420,7 @@ closes = [bar.close for bar in bars]
 
 ---
 
-# 33. Next Target — Research Data and First Equity Backtest
+# 33. Implemented — Research Data and First Equity Backtest
 
 Records/CSV and optional pandas exports, opt-in session enrichment, explicit
 historical start/end queries with paging/pacing, basic dataset metadata, and
@@ -1455,7 +1457,8 @@ calculations and backtests consume collected datasets; they must not depend on a
 open chart or a continuously connected broker. Data acquisition still requires
 the user's IBKR setup and permissions. Data/research APIs above are implemented;
 the daily backtest engine and basic performance accounting above are implemented.
-Portfolio/options simulation and broker trading controls remain planned.
+The first intraday recorded-option simulation is also implemented (section 35).
+Portfolio simulation, broader option lifecycle models and broker controls remain planned.
 
 ---
 
@@ -1467,7 +1470,8 @@ position/cash reconciliation, explicit start/stop/cancel controls, and reconnect
 handling before moving toward live execution. Chart navigation must not control
 strategy subscriptions or order lifecycle. This target can reuse the first equity
 backtest foundation; it does not depend on chart feature parity. The stock/option
-quote and options research pilot is the next implementation priority.
+quote and options research pilot has since been implemented (section 35);
+live-session capture and simulation verification precede broker execution work.
 
 ---
 

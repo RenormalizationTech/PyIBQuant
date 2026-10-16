@@ -6,10 +6,10 @@ quantitative research, backtesting, and algorithmic trading.
 The main product is a usable Python API for the research-to-trading workflow.
 Charts help inspect data, signals and results. Live IBKR access requires a manually
 installed `ibapi`, a running and logged-in TWS or IB Gateway, and the account and
-market-data permissions needed for the requested instruments. Backtesting and
-algorithmic execution are planned; the implemented foundation currently provides
-market data, bar exports, optional enrichment, caching, connection recovery and
-interactive charts.
+market-data permissions needed for the requested instruments. Implemented features
+include market data, frozen datasets, research calculations, daily equity and
+intraday recorded-option backtests, quote recording/replay, and interactive charts.
+Broker-connected algorithmic execution remains planned.
 
 ## Project documents
 
@@ -29,8 +29,8 @@ verified against TWS. Grouped option discovery, independently owned quote stream
 and sampled recording/offline replay are also implemented. The first intraday
 option simulator now consumes our collected recordings with explicit ask/bid
 fills, costs and quote-quality checks. Next: collect confirmed-live samples and
-verify the full pipeline during trading hours;
-user-controlled paper trading remains on the roadmap. Equities/ETFs are the initial workflow
+verify the full pipeline during trading hours. User-controlled paper trading
+remains on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
 the project owner's primary personal interest. A focused options research pilot
 builds on the shared foundation, ahead of broad scanners or
@@ -48,7 +48,9 @@ live bar updates. This is the initial market-data slice of [the plan](PROJECT_PL
 
 ### Setup
 
-Python 3.11+ and a running, logged-in TWS or IB Gateway are required.
+Python 3.11+ is required. Live IBKR access additionally requires a running,
+logged-in TWS or IB Gateway and the manually installed SDK described below.
+Saved-dataset research and recorded-quote backtests run offline without that setup.
 
 ```sh
 python3 -m venv .venv
@@ -835,7 +837,11 @@ Offline tests simulate provider callbacks; they do not connect to an account.
 The SDK-free subset runs without `ibapi`:
 
 ```sh
-python -m pytest tests/test_core.py tests/test_cache_core.py tests/test_exports.py tests/test_pacing.py tests/test_research.py
+python -m pytest \
+  tests/test_core.py tests/test_cache_core.py tests/test_exports.py \
+  tests/test_pacing.py tests/test_research.py tests/test_dataset.py \
+  tests/test_backtest.py tests/test_quote_core.py tests/test_option_core.py \
+  tests/test_quote_recording.py tests/test_option_backtest.py
 ```
 
 Development checks run locally with the manually installed IBKR Python API.

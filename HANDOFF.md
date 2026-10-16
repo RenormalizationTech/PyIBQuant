@@ -3,7 +3,10 @@
 Checkpoint: 2026-10-16. This document records the chart-foundations implementation
 and local validation. Snapshot commit e42aede records the session/recovery/research
 and frozen-dataset foundations. Commit 95fbdaf records the daily equity backtest.
-The quote follow-ups are recorded below; no push or release was performed. Start with `git status` and `git log -1` after transferring work.
+Commit 1d3809d records option discovery, quote streams and recording/replay;
+a02edcc adds intraday option backtests from those recordings. Later cleanup is
+recorded in Git. Start with `git status -sb` and `git log -1` after transferring work.
+Remote synchronization is visible in Git; this checkpoint is not a release.
 
 ## Where to resume
 
@@ -49,14 +52,16 @@ Keep normalized immutable bars, Python snapshots, the provider boundary and lazy
 chart imports. They let research consume data without opening a browser. Existing
 charts are useful inspection tools, not a required strategy runtime.
 
-Session enrichment is now optional and bar exports are implemented. Before adding
-backtest/trading APIs, validate the new bounds/metadata path against TWS, define
-completed-bar/replay semantics, and separate chart/strategy subscription ownership. Current
-chart selection cancels the previous series; do not attach a strategy to that
-chart-owned subscription. Fixed-range downloads release the Market operation lock so subscription
-cancellation remains responsive. Legacy lookback loads/reconnect still serialize
-operations; future broker order controls need an independent responsive path. Add execution/order/fill reconciliation separately from data-only
-reconnect. The prototype has no order placement/control API yet.
+Session enrichment, bar exports and fixed-range metadata are implemented and
+verified against TWS. Daily equity and intraday option replay have explicit
+execution timing. Before adding broker-connected strategies, define completed-bar
+events and separate chart/strategy bar-subscription ownership. Current chart
+selection cancels the previous series; do not attach a strategy to that chart-owned
+subscription. Quote handles already have independent ownership. Fixed-range
+downloads release the Market operation lock so cancellation remains responsive.
+Legacy lookback loads/reconnect still serialize operations; future broker controls
+need an independent responsive path. Add order/fill/position reconciliation
+separately from data-only reconnect. No order placement/control API exists yet.
 
 The full rationale and the revised research → equity backtest → paper trading
 order are recorded in PROJECT_PLAN.md. Later monitoring/options and chart-workspace
@@ -210,8 +215,9 @@ There is no order placement or broker-connected strategy loop.
 `research.above_sma` and `research.sma_crossover` provide trailing-only signals;
 `examples/backtest_equity.py` runs either offline and saves inputs, strategy,
 JSON results and CSV logs. Defaults are explicit simulation inputs, not IBKR fees.
-The next implementation priority is the options pilot; quote snapshots below
-are the first implemented step.
+The options pilot below now includes snapshots, discovery, quote streams,
+recording/replay and the first intraday simulator. Live-session verification
+remains the next integration step.
 Optional result charts and paper execution controls remain planned.
 
 ## Level-one quote snapshots (2026-10-16)
@@ -522,6 +528,13 @@ python tests/browser_controls_check.py
 
 ## Validation recorded at this checkpoint
 
+Documentation cleanup (2026-10-16): reconciled README scope/setup, architecture
+readiness, roadmap and handoff with the implemented datasets and both simulators.
+All 317 local tests, Ruff, mypy and whitespace checks pass. The documented expanded
+SDK-free subset passes 187 tests with six pandas checks skipped against the
+installed wheel. Local Markdown links resolve, and no generated charts, datasets,
+environments or build outputs are tracked. Live-session verification remains pending.
+
 Collected-option simulator follow-up (2026-10-16): 317 local tests, Ruff and mypy
 (22 source files) pass. Its 41 tests cover hand-calculated ask/bid accounting,
 nonstandard multipliers, costs, pending intents/latency, new receipt timing,
@@ -734,6 +747,8 @@ counts and chart screenshots are local artifacts, not fixtures or release data.
 - US stock/ETF quote snapshots, selected streams and grouped option discovery are implemented.
 - Quote streams terminate on disconnect; no automatic quote recovery or file resume/rotation.
 - Sampled recordings are not tick archives; replay loads files in memory.
+- The option simulator is intraday, long/flat and pre-expiry only; live-session
+  pipeline verification and exercise/assignment/settlement modeling remain pending.
 - Depth, chart bid/ask display and historical option quote imports are not implemented.
 - IBKR limits/entitlements apply; fixed ranges page automatically, legacy lookbacks remain single requests.
 - Live bars remain in memory without a retention limit; full snapshots are polled/redrawn.
@@ -757,5 +772,6 @@ python -m pyibquant chart AAPL --interval 1d --duration '6 M' --live --web-port 
 ```
 
 The HTTP server and TWS connection are local processes, not part of the commit.
-Before moving machines, inspect `git status --short` and `git log -1`, then push
-the checkpoint to your chosen remote when ready. No push was performed here.
+Before moving machines, inspect `git status -sb`, `git log -1` and the configured
+remote. Fetch origin and compare `git log origin/main..HEAD` to identify any local
+commits that still need pushing. Generated data stays local even after source is pushed.

@@ -29,11 +29,12 @@ keep contract identity, multipliers and execution assumptions extensible to opti
 
 After the shared data/first equity-backtest slice, prioritize stock/option quote
 access and an options pilot ahead of broad-universe monitoring or chart parity.
-The options pilot should identify contracts by underlying/expiry/strike/right,
-show bid/ask/spread and available IV/Greeks, and support collecting selected quotes
-for later research. Historical option dataset imports and explicit spread/fill
-models follow; full options backtesting also needs expiry/exercise/assignment
-semantics. Do not assume IBKR can reconstruct expired option histories, or that
+The options pilot identifies contracts by underlying/expiry/strike/right,
+provides bid/ask/spread and available IV/Greeks, and collects selected quotes
+for later research. The initial intraday simulator has explicit ask/bid and cost
+assumptions. Historical dataset imports, richer fill models and full options
+lifecycle behavior (expiry/exercise/assignment) remain future work.
+Do not assume IBKR can reconstruct expired option histories, or that
 recorded sampled quotes form a complete exchange tick archive. Explicit option
 snapshots, grouped discovery, continuous selected-contract subscriptions and
 sampled recording/replay are implemented. The first intraday options simulator
@@ -67,7 +68,8 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 
 Next: collect and verify live options during their trading session, then run the
 first options simulation on those observations. The user chose our collected
-recordings. Discovery and sampled quote collection are implemented and verified with frozen AAPL option data. Keep
+recordings. Discovery and sampled quote collection are implemented and verified
+with frozen AAPL option data. Keep
 paper execution separate; the simulator does not submit orders or model account
 settlement, dividends, taxes, liquidity or historical nominal-share execution.
 
