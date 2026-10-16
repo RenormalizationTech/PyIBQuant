@@ -22,9 +22,11 @@ returns/SMA and a research example have since been added with offline and live T
 verification. Frozen dataset reload and explicit calendar/finality comparisons are
 also implemented. The first daily equity backtest now works offline. Grouped
 option discovery, independent quote streams and sampled recording/offline replay
-are now implemented. Frozen AAPL integration checks pass. Next: choose the first
-options-backtest historical input source, then implement its replay/execution
-model. In-session live option verification remains pending.
+are now implemented. Frozen AAPL integration checks pass. The user chose our
+collected recordings for the first options backtest. Its intraday, SDK-free
+long/flat simulator and offline JSON/CSV example are now implemented. Next: collect
+confirmed-live intraday observations and validate the complete pipeline.
+In-session live option verification remains pending.
 Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
@@ -296,9 +298,52 @@ rotation and a bounded-memory large-file reader remain planned.
 `examples/options_research.py` discovers alone or records one selected contract
 into a new timestamped directory with chain.json and quotes.jsonl. Data is ignored
 under charts/. The live check uses only the already selected AAPL 2026-11-20 340 C
-in explicit frozen mode and cancels it after six seconds. Next options-backtest
-input choice was requested: new collected recordings versus user-supplied
-historical data. Do not assume IBKR reconstructs expired-option quote histories.
+in explicit frozen mode and cancels it after six seconds. The user chose newly
+collected recordings for the first options backtest. Do not assume IBKR reconstructs
+expired-option quote histories.
+
+## First options simulation from collected recordings
+
+The user chose our collected recordings rather than an external historical data
+import. `pyibquant.option_backtest.backtest_option()` uses standard-library code;
+no third-party backtesting package, SDK or chart runtime is involved.
+`hold_window()` and `spread_targets()` provide causal demonstration targets.
+Custom targets must contain one boolean per observation and avoid future data.
+
+Scope: one resolved option, fixed whole-contract long/flat, one New York date
+strictly before expiry. Input must be complete; frozen/delayed, terminal states,
+nonincreasing timestamps, future receipt times and excessive sample gaps fail.
+Initial unknown-feed rows are ineligible; confirmed live observations are required.
+A signal acts after its observation, fills only at a later sample after latency
+and a newer side-price receipt, and stays pending across unchanged targets.
+Changed targets replace/cancel after the current observation is processed.
+Buys use ask plus slippage and sells bid minus slippage. The recorded multiplier,
+cash and displayed side size determine whole fills; fees are per contract per fill.
+Both prices and both size receipt clocks must satisfy local age/skew limits.
+Missing/stale/crossed/undersized quotes skip execution instead of manufacturing fills.
+
+Open positions remain marked at a qualifying bid, without forced final sale or
+estimated exit fees. Missing valuation stays None; period returns across it and
+full-path drawdown are unknown. A recovered final mark can restore final return
+without certifying the intervening path. No shorts, borrowing, partial fills,
+queue priority, market impact, book reservation, exercise, assignment, expiry payoff,
+overnight carry, settlement, interest or taxes. Local receipt age is not exchange
+quote age, and displayed size is not proof of executable liquidity.
+
+`QuoteRecording.fingerprint()` hashes canonical header/samples/footer, including
+completion state. It identifies inputs, while the footer checksum verifies original
+header/sample bytes; neither authenticates a source. Result JSON retains metadata,
+exact targets, configuration, warnings, fills/trades/skips and equity/metrics.
+`examples/backtest_option.py` reads the input bytes once, validates that snapshot,
+then exports exact inputs, strategy settings, results and CSV logs. It rejects
+invalid/frozen input before creating results. Default output is ignored
+charts/option-backtest/; use a separate --output-dir to keep multiple runs.
+
+Next: during the option's trading session, run the existing recorder with
+--market-data-type live on the user-selected AAPL 2026-11-20 340 C, then the offline
+example. See README commands. A real live-session recording is still needed to
+validate the complete capture-to-simulation pipeline; the existing frozen sample
+is deliberately refused. No permission/subscription/account changes are implied.
 
 ## What exists
 
@@ -312,6 +357,9 @@ historical data. Do not assume IBKR reconstructs expired-option quote histories.
 | `src/pyibquant/quote_stream.py` | Subscription ownership and independent consumer update cursors |
 | `src/pyibquant/quote_recording.py` | Sampled JSONL recording, integrity/partial checks, quality reports and offline replay |
 | `examples/options_research.py` | Discovery and selected-contract recording workflow |
+| `src/pyibquant/option_backtest.py` | SDK-free intraday recorded-option simulation and results |
+| `examples/backtest_option.py` | Offline simulation, exact input preservation and JSON/CSV exports |
+| `tests/test_option_backtest.py` | Hand-calculated accounting, quote timing, quality limits and example exports |
 | `tests/live_options_research_check.py` | Explicit TWS chain → stream → recording → offline replay integration check |
 | `src/pyibquant/quotes.py` | SDK-free option selectors, quote/Greek values and callback normalization |
 | `examples/quote_snapshot.py` | Stock/explicit-option snapshot inspection and JSON export |
@@ -473,6 +521,17 @@ python tests/browser_controls_check.py
 ```
 
 ## Validation recorded at this checkpoint
+
+Collected-option simulator follow-up (2026-10-16): 317 local tests, Ruff and mypy
+(22 source files) pass. Its 41 tests cover hand-calculated ask/bid accounting,
+nonstandard multipliers, costs, pending intents/latency, new receipt timing,
+skipped fills, missing/recovered valuation, causality, invalid input and both
+offline example strategies with exact inputs and reproducible JSON/CSV exports.
+The rebuilt base wheel passes its isolated smoke check without ibapi/pandas/PyArrow;
+the installed-wheel SDK-free research/quote/backtest subset passes 167 tests and
+skips six pandas checks. The actual saved frozen AAPL recording loads correctly
+but is rejected for simulation as intended. No new live prices or performance
+claims were verified; the market was closed during this implementation.
 
 Discovery/stream/recording follow-up (2026-10-16): 276 local tests, Ruff and
 mypy (21 source files) pass. The bare installed wheel passes its expanded smoke

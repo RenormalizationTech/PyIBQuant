@@ -36,8 +36,10 @@ the options pilot: stock/explicit-option Level-one snapshots now work, with stoc
 feed verification and frozen AAPL option bid/ask/model IV/Greeks verified against
 TWS. Grouped option discovery, independently owned quote streams and sampled
 recording/offline replay are now implemented and verified with frozen AAPL data.
-Next choose the historical inputs for the first options backtest; in-session live
-option verification remains pending.
+The user chose our collected recordings for the first options backtest. An offline
+intraday simulator now uses later observed ask/bid fills, costs, recorded multipliers
+and explicit freshness/size checks. In-session live capture and end-to-end simulation
+verification remain pending.
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
@@ -1504,9 +1506,26 @@ The following foundation is now also implemented:
 AAPL verification returned 41 chain groups and recorded 12 frozen observations,
 10 with bid/ask and 9 with model IV/delta. This verifies acquisition/recording,
 not an exchange tick archive or live trading-session coverage. Automatic quote
-reconnect, chart bid/ask enrichment, historical imports and the options backtest
-engine remain planned. The first backtest input-source decision is pending:
-collect recordings going forward or import a historical dataset supplied by the user.
+reconnect, chart bid/ask enrichment and historical imports remain planned.
+The user chose our collected recordings for the first backtest.
+
+`pyibquant.option_backtest.backtest_option()` is now a standard-library intraday
+long/flat simulator for one resolved option. Boolean targets act only at a later
+sample with a new side-price receipt after the signal and configurable latency.
+Buys use ask plus slippage, sells bid minus slippage; costs are per contract and
+actual recorded multipliers are retained. Local receipt age/skew and displayed
+size gate fills; no borrowing or partial fills. Unchanged targets preserve pending
+intents. Unpriced open positions remain unknown rather than forward-filled.
+Only complete, confirmed-live, same-New-York-date recordings strictly before
+expiry qualify; frozen/delayed data, excessive sample gaps and terminal states
+are rejected. Initial unknown-feed samples are ineligible. This does not model
+exchange quote age, queue priority, market impact or guaranteed liquidity.
+`examples/backtest_option.py` runs hold-window or spread-filter demonstrations
+and exports exact input bytes, input-fingerprinted results/assumptions, strategy settings
+and fill/trade/skip/equity CSV logs without TWS/SDK/optional dependencies.
+The next verification step needs a live intraday recording; frozen AAPL data
+remains diagnostic replay input. Exercise, assignment, overnight carry and
+settlement remain outside this initial simulator.
 
 
 Options trading/backtesting is an explicit product priority. After the shared

@@ -36,7 +36,8 @@ models follow; full options backtesting also needs expiry/exercise/assignment
 semantics. Do not assume IBKR can reconstruct expired option histories, or that
 recorded sampled quotes form a complete exchange tick archive. Explicit option
 snapshots, grouped discovery, continuous selected-contract subscriptions and
-sampled recording/replay are implemented. Options backtesting remains planned.
+sampled recording/replay are implemented. The first intraday options simulator
+now consumes our collected recordings; broader options lifecycle modeling remains planned.
 
 ## Python research data workflow
 
@@ -64,9 +65,9 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Optional entry/exit and performance visualizations
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
-Next: choose the historical input source for the first options backtest and
-verify live options during their trading session. Discovery and sampled quote
-collection are implemented and verified with frozen AAPL option data. Keep
+Next: collect and verify live options during their trading session, then run the
+first options simulation on those observations. The user chose our collected
+recordings. Discovery and sampled quote collection are implemented and verified with frozen AAPL option data. Keep
 paper execution separate; the simulator does not submit orders or model account
 settlement, dividends, taxes, liquidity or historical nominal-share execution.
 
@@ -88,10 +89,15 @@ settlement, dividends, taxes, liquidity or historical nominal-share execution.
 - [x] Independently owned continuous stock/option quote subscriptions and consumer cursors
 - [x] Sampled JSONL recording, integrity checks, partial-status handling and SDK-free replay
 - [x] Frozen AAPL discovery → selected stream → recording → offline replay verified via TWS
-- [ ] Choose first options-backtest inputs: newly collected recordings or supplied historical data
+- [x] First options-backtest input decision: use our collected recordings
+- [x] SDK-free intraday long/flat option simulator with later-sample ask/bid fills
+- [x] Recorded multiplier, displayed-size/cash checks, configurable costs/latency/receipt age/skew
+- [x] Reject frozen/delayed/excessively gapped/overnight/expiry inputs; expose unpriced positions
+- [x] Hand-checked accounting/causality tests and offline example with input/JSON/CSV exports
+- [ ] Collect confirmed-live intraday AAPL observations and verify end-to-end simulation
 - [ ] Quote reconnect with explicit generation/gap recording; file rotation/large-file replay
 - [ ] Chart bid/ask display
-- [ ] Historical quote imports and options-specific spread/fill/expiry semantics
+- [ ] Historical quote imports, richer liquidity models and expiry/exercise/assignment semantics
 
 ## Execution architecture prerequisites
 

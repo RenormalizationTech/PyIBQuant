@@ -26,8 +26,10 @@ without a broker. A first daily equity backtest now simulates next-open executio
 costs and performance from these frozen inputs. Level-one quote snapshots support
 stocks and explicit option selectors, with live stock and frozen option snapshots
 verified against TWS. Grouped option discovery, independently owned quote streams
-and sampled recording/offline replay are also implemented. Next: choose inputs
-for the first options backtest and verify live options during trading hours;
+and sampled recording/offline replay are also implemented. The first intraday
+option simulator now consumes our collected recordings with explicit ask/bid
+fills, costs and quote-quality checks. Next: collect confirmed-live samples and
+verify the full pipeline during trading hours;
 user-controlled paper trading remains on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
 the project owner's primary personal interest. A focused options research pilot
@@ -498,8 +500,70 @@ Each run creates a timestamped directory under ignored `charts/options-research/
 `python tests/live_options_research_check.py` verified 41 AAPL chain groups and a
 six-second recording of the selected call: 12 samples, 10 with bid/ask and 9 with
 model IV/delta, with confirmed frozen feed labels. In-session live option
-verification, historical option imports and options execution/backtesting remain
-separate work. Frozen samples are not historical live trading observations.
+verification and historical option imports remain separate work. Frozen samples
+are not historical live trading observations.
+
+### First options backtest from our recordings
+
+The first options simulator uses our collected recordings, as chosen for this
+project. It runs offline with the standard library; no backtesting package,
+TWS connection or SDK is required:
+
+```python
+from pyibquant import QuoteRecording
+from pyibquant.option_backtest import backtest_option, hold_window
+
+recording = QuoteRecording.load("charts/quotes/live-aapl.jsonl")
+targets = hold_window(recording, seconds=30)  # Demonstration, not a trading recommendation.
+result = backtest_option(recording, targets, initial_cash=10000, contracts=1,
+                         commission=1, slippage_bps=5, max_quote_age=2,
+                         max_side_skew=1, max_gap=5, latency=0)
+print(result.metrics())
+result.save("charts/option-backtest/results.json")
+```
+
+For a new live recording, run this during the selected option's trading session
+with logged-in TWS and the appropriate existing data permissions:
+
+```sh
+python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --trading-class AAPL --multiplier 100 --market-data-type live --duration 60 --interval .5
+python examples/backtest_option.py "charts/options-research/<run>/quotes.jsonl" --hold-seconds 30 --commission 1 --slippage-bps 5
+```
+
+Replace `<run>` with the directory printed by the recorder. The offline example
+also supports `--strategy spread-filter --max-spread-fraction .05`. These two
+strategies demonstrate simulation mechanics, not expected profitability. It
+exports the exact input recording, its content fingerprint, strategy settings,
+results/assumptions JSON and fills/trades/skipped-fills/equity CSV files. Reuse
+`result.signals` for the exact recorded targets. Custom signals must contain one
+boolean per sample and use only information available at that observation.
+
+The model holds a fixed whole-contract long position or stays flat. A signal
+becomes active after its sample. A pending intent can fill only at a later sample,
+after the configured latency and a side-price receipt newer than the signal.
+Unchanged targets preserve the pending intent; changed targets replace or cancel
+it after the current observation is processed. Buys use ask plus adverse slippage,
+sells bid minus adverse slippage; commissions apply per contract per fill. It uses
+the recorded contract multiplier, checks available cash and displayed side size,
+and skips whole fills when quotes are missing, crossed, stale or asynchronous.
+There are no partial fills, shorting, borrowing or forced final exit.
+
+Inputs must be complete recordings of one resolved option on one New York date
+strictly before expiry. Frozen/delayed data, terminal stream states, nonincreasing
+times and gaps beyond `max_gap` are rejected. Initial unknown-feed observations
+are ineligible; confirmed live observations are required. Both prices and both
+size receipt clocks must pass age/skew checks. These local clocks cannot establish
+exchange quote age, and displayed size does not guarantee a fill or model queue
+priority, market impact or book depletion.
+
+Open positions are marked at a qualifying bid without an estimated exit fee.
+An unavailable valuation stays `None`; period returns across it and full-path
+drawdown remain unknown. An eventual valid final mark can restore final return,
+while `valuation_complete` remains false. Exercise, assignment, expiry payoff,
+overnight carry, settlement, interest and taxes are outside this first model.
+Hand-calculated and causal offline tests pass; a real live-session capture and
+simulation check remain pending. Existing frozen AAPL recordings are rejected
+as backtest inputs and remain available for diagnostic replay.
 
 ### HTML snapshot
 

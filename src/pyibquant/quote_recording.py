@@ -122,6 +122,19 @@ class QuoteRecording:
         for record in self._samples_json:
             yield json.loads(record)
 
+    def fingerprint(self) -> str:
+        """Digest of canonical header, samples and footer, including completion state.
+
+        This identifies replay inputs; the on-disk footer digest separately checks
+        original header/sample bytes. Neither digest establishes authenticity.
+        """
+        digest = hashlib.sha256()
+        digest.update((self._header_json + '\n').encode('utf-8'))
+        for record in self._samples_json:
+            digest.update((record + '\n').encode('utf-8'))
+        digest.update((self._end_json or 'null').encode('utf-8'))
+        return digest.hexdigest()
+
     def quality(self) -> dict[str, Any]:
         """Describe sampled availability/feed labels, never execution suitability."""
         pairs = crossed = delayed = frozen = model = 0
