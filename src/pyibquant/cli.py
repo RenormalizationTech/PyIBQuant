@@ -31,6 +31,9 @@ def main() -> int:
     chart.add_argument("--extended-hours", action="store_true")
     chart.add_argument("--live", action="store_true", help="Keep bar updates running on localhost")
     chart.add_argument(
+        "--no-reconnect", action="store_true", help="Disable automatic live subscription recovery"
+    )
+    chart.add_argument(
         "--web-port", type=int, default=0, help="Live chart HTTP port; 0 selects a free port"
     )
     chart.add_argument("--output", type=Path, default=Path("charts/chart.html"))
@@ -72,6 +75,7 @@ def main() -> int:
             cache_dir=cache_dir,
             cache_max_age=args.cache_max_age,
             refresh_cache=args.refresh_cache,
+            reconnect=not args.no_reconnect,
         ) as market:
             bars = market.bars(
                 args.symbol,
@@ -80,6 +84,7 @@ def main() -> int:
                 live=args.live,
                 regular_hours=not args.extended_hours,
                 primary_exchange=args.primary_exchange,
+                include_sessions=True,
             )
             print(f"Received {len(bars)} bars for {bars.symbol}", flush=True)
             if args.live:

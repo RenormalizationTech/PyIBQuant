@@ -7,7 +7,8 @@
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b1018; color: #e1e8f0; }
     * { box-sizing: border-box; }
-    body { margin: 0; }
+    body { margin: 0; height: 100dvh; display: flex; flex-direction: column; }
+    body > * { flex-shrink: 0; }
     header { display: flex; justify-content: space-between; align-items: center; padding: 22px 28px; border-bottom: 1px solid #263243; gap: 20px; flex-wrap: wrap; }
     .brand { font-size: 12px; letter-spacing: .15em; color: #8ca0b9; }
     h1 { margin: 8px 0 0; font-size: 26px; font-weight: 600; }
@@ -28,12 +29,13 @@
     #controls-note { font-size: 12px; color: #8ca0b9; }
     #status { padding: 14px 28px 0; }
     #history-controls { padding: 10px 28px 0; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-    #history-status { font-size: 12px; color: #8ca0b9; }
+    #history-status, #freshness, #countdown, #sessions-note { font-size: 12px; color: #8ca0b9; }
+    #data-context { padding: 8px 28px 0; display: grid; gap: 5px; }
     #error { margin: 12px 28px; color: #ffc5a8; white-space: pre-wrap; font-size: 13px; }
     #legend { min-height: 34px; padding: 12px 28px; font: 12px ui-monospace, monospace; color: #b9cce1; }
-    #chart { width: 100%; height: calc(100dvh - 245px); min-height: 350px; }
+    #chart { width: 100%; flex: 1 0 350px; min-height: 350px; position: relative; }
     footer { padding: 14px 28px; line-height: 1.8; border-top: 1px solid #263243; }
-    #market-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+    #market-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
     #market-canvas:focus-visible { outline: 1px solid #6d9bc9; outline-offset: -2px; }
     #legend { line-height: 1.6; }
   </style>
@@ -42,6 +44,7 @@
   <header>
     <div><div class="brand">PYIBQUANT / MARKET OBSERVATORY</div><h1><span id="symbol"></span><span id="meta"></span></h1></div>
     <div class="chart-actions">
+      <button id="sessions" aria-pressed="true" title="Show provider session shading and day separators">Sessions: on</button>
       <label for="right-margin">Right space<select id="right-margin" title="Space after the latest candle as a percentage of chart width">
         <option value="0">0%</option><option value="0.1" selected>10%</option><option value="0.2">20%</option><option value="0.3">30%</option><option value="0.4">40%</option>
       </select></label>
@@ -67,6 +70,7 @@
     <p id="controls-note">Saved snapshot. To change markets, open the connected chart with pyibquant chart AAPL --live.</p>
   </form>
   <div id="status" role="status"></div><div id="error" role="alert" hidden></div>
+  <div id="data-context"><span id="freshness"></span><span id="countdown"></span><span id="sessions-note"></span></div>
   <div id="history-controls"><button id="load-older" disabled>Load older</button><span id="history-status" role="status"></span></div>
   <div id="legend"></div>
   <div id="chart"><canvas id="market-canvas" tabindex="0" role="img"

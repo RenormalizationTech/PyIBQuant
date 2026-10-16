@@ -5,7 +5,7 @@ from pyibquant import Market
 
 def main() -> None:
     with Market.ibkr() as market:
-        aapl = market.bars("AAPL", interval="1min", duration="1 D")
+        aapl = market.bars("AAPL", interval="1min", duration="1 D", include_sessions=True)
         aapl.plot()
 
     # For continuous bar updates instead:

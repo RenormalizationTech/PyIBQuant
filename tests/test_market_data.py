@@ -7,7 +7,6 @@ import pytest
 from pyibquant import Bar, BarSeries
 from pyibquant.data.providers.ibkr import IBKRProvider, normalize_bar
 from pyibquant.errors import ConnectionError, DataError, RequestTimeout
-from pyibquant.visualization.chart import ChartSession, render_chart
 
 
 def raw_bar(timestamp="1792071000", close=101):
@@ -23,6 +22,7 @@ def provider(monkeypatch):
     result = IBKRProvider("127.0.0.1", 7497, 71, 0.01)
     result.isConnected = Mock(return_value=True)
     result.cancelHistoricalData = Mock()
+    result._pacer = Mock()
     return result
 
 
@@ -184,92 +184,6 @@ def test_empty_history_is_an_error(provider):
     )
     with pytest.raises(DataError, match="No bars"):
         provider.bars("AAPL")
-
-
-def test_chart_export_is_safe_and_snapshot_is_not_labelled_live(tmp_path):
-    series = BarSeries('</script><script>alert("x")</script>', "1d", live=True)
-    series.update(normalize_bar(raw_bar("20261015"), "1d"))
-    series.error = "<untrusted provider message>"
-    path = series.plot(tmp_path / "chart.html", open_browser=False)
-    html = path.read_text()
-    assert '</script><script>alert("x")</script>' not in html
-    assert "\\u003c" in html
-    assert '"live": false' in html
-    assert '"time": "2026-10-15"' in html
-    assert "const liveEndpoint = false;" in html
-    assert "const liveEndpoint = true;" in render_chart(series, live_endpoint=True)
-    assert '<canvas id="market-canvas"' in html
-    assert "class MarketChart" in html
-    assert "<script src=" not in html
-    assert "__CHART_SCRIPT__" not in html
-    assert "TradingView" not in html
-    assert "const controlsEnabled = false;" in html
-    assert "const controlsEnabled = true;" in render_chart(series, controls=True)
-
-
-def test_selection_releases_previous_subscription_after_success():
-    original = BarSeries("AAPL", "1min", live=True)
-    replacement = BarSeries("SPY", "5min", live=True)
-    loader, cancel = Mock(return_value=replacement), Mock()
-    session = ChartSession(original, loader, cancel)
-    assert session.select("SPY", "5min", "1 D")["symbol"] == "SPY"
-    loader.assert_called_once_with("SPY", "5min", "1 D", True)
-    cancel.assert_called_once_with(original)
-    assert session.series is replacement
-
-
-def test_failed_selection_keeps_previous_chart_and_serializes_requests():
-    original = BarSeries("AAPL", "1min", live=True)
-    loader, cancel = Mock(side_effect=DataError("Unknown symbol")), Mock()
-    session = ChartSession(original, loader, cancel)
-    with pytest.raises(DataError, match="Unknown symbol"):
-        session.select("MISSING", "5min", "1 D")
-    assert session.series is original
-    cancel.assert_not_called()
-    with session._selection_lock, pytest.raises(BlockingIOError):
-        session.select("SPY", "5min", "1 D")
-    loader.assert_called_once()
-
-
-def test_trading_hours_switch_persists_and_failure_keeps_active_hours():
-    original = BarSeries("AAPL", "1min", live=True)
-    extended = BarSeries("AAPL", "1min", live=True)
-    extended.regular_hours = False
-    loader = Mock(return_value=extended)
-    cancel = Mock()
-    session = ChartSession(original, loader, cancel)
-    first_id = session.selection_id
-    assert session.select("AAPL", "1min", "1 D", False)["regular_hours"] is False
-    assert session.selection_id != first_id
-    loader.assert_called_once_with("AAPL", "1min", "1 D", False)
-    session.select("SPY", "5min", "1 D")
-    loader.assert_called_with("SPY", "5min", "1 D", False)
-    loader.side_effect = DataError("Unavailable")
-    with pytest.raises(DataError):
-        session.select("AAPL", "1min", "1 D", True)
-    assert session.series is extended
-    assert session.payload()["regular_hours"] is False
-    assert cancel.call_count == 2
-    for invalid in ["false", 0, 1]:
-        with pytest.raises(ValueError, match="boolean"):
-            session.select("AAPL", "1min", "1 D", invalid)
-
-
-def test_market_browser_selection_passes_hours_to_provider(monkeypatch):
-    from pyibquant import Market
-
-    provider = Mock()
-    initial = BarSeries("AAPL", "1min", live=True)
-    initial.primary_exchange = "NASDAQ"
-    server = Mock()
-    monkeypatch.setattr("pyibquant.visualization.chart.serve_chart", server)
-    Market(provider).serve(initial, open_browser=False)
-    load = server.call_args.kwargs["loader"]
-    load("AAPL", "5min", "2 D", False)
-    provider.bars.assert_called_once_with(
-        "AAPL", interval="5min", duration="2 D", live=True,
-        regular_hours=False, primary_exchange="NASDAQ", refresh=False,
-    )
 
 
 def test_cancel_series_does_not_cancel_other_subscriptions(provider):

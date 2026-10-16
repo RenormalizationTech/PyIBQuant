@@ -1,12 +1,36 @@
 # PyIBQuant
 
-A Python quantitative research, visualization, backtesting, and algorithmic trading platform for Interactive Brokers users.
+A Python-first toolkit for convenient access to Interactive Brokers market data,
+quantitative research, backtesting, and algorithmic trading.
+
+The main product is a usable Python API for the research-to-trading workflow.
+Charts help inspect data, signals and results. Live IBKR access requires a manually
+installed `ibapi`, a running and logged-in TWS or IB Gateway, and the account and
+market-data permissions needed for the requested instruments. Backtesting and
+algorithmic execution are planned; the implemented foundation currently provides
+market data, bar exports, optional enrichment, caching, connection recovery and
+interactive charts.
 
 ## Project documents
 
 - [Development handoff](HANDOFF.md): setup on another machine, current architecture and limitations
-- [Visualization TODO](TODO.md): completed work and ordered next milestones
+- [Project TODO](TODO.md): research priorities, completed foundations and supporting chart backlog
 - [Project plan](PROJECT_PLAN.md): research-to-trading vision and overall phases
+
+## Development direction
+
+Python exports, optional session enrichment, fixed historical ranges, dataset
+metadata and a returns/SMA research example are implemented and verified against
+TWS. Frozen dataset save/reload and explicit calendar/finality audits also work
+without a broker. Next: the first equity backtest, followed by
+user-controlled paper trading. Equities/ETFs are the initial workflow
+for general users; options trading/backtesting is a major product direction and
+the project owner's primary personal interest. A focused stock/option quote and
+options research pilot follows the shared foundation, ahead of broad scanners or
+advanced chart-workspace features.
+The existing chart is an optional data/results viewer. Order placement, account
+state and strategy execution are not implemented yet. See the project plan for
+the data/strategy/broker boundaries to address before adding them.
 
 ## First slice: IBKR → Python → HTML chart
 
@@ -52,6 +76,193 @@ Use a unique client ID for each concurrent API application. Defaults are
 `127.0.0.1:7497`, client ID `71`. Data permissions depend on the instrument and
 your IBKR subscriptions; historical bars and live updates can require different
 permissions. Delayed data is not substituted automatically.
+
+### Python research exports
+
+Fetch bars once and export/analyze them without opening a chart:
+
+```python
+from pyibquant import Market
+
+with Market.ibkr() as market:
+    bars = market.bars("AAPL", interval="1min", duration="1 D")
+    # No extra session-schedule requests by default.
+    # Use include_sessions=True when you need provider session metadata.
+
+records = bars.to_records()
+path = bars.to_csv("charts/research/AAPL-1min.csv")
+```
+
+Each export captures one sorted snapshot, deduplicated by timestamp. Returned
+records and DataFrames are independent copies; changing them does not change the
+series. Exports work after the connection closes and make no IBKR requests.
+Live exports include the latest available candle, which may still be partial;
+exporting does not mark candles as completed.
+
+`to_records()` returns dictionaries with `timestamp`, `open`, `high`, `low`,
+`close`, and `volume`. Intraday timestamps are native UTC-aware Python datetimes;
+daily/weekly/yearly timestamps remain Python dates. `to_csv(path)` writes those
+same columns in that order, with ISO 8601 UTC offsets for intraday timestamps and
+`YYYY-MM-DD` for date-only bars. It creates parent directories, expands `~`, and
+returns the absolute path. A completed file replaces the destination atomically;
+write failures preserve an existing file. Empty series produce a header-only CSV.
+Records and CSV need no pandas or Parquet installation.
+
+For an optional pandas DataFrame:
+
+```sh
+python -m pip install -e '.[pandas]'
+```
+
+```python
+frame = bars.to_dataframe()
+returns = frame["close"].pct_change()
+```
+
+The frame has a `timestamp` index and float64 `open`, `high`, `low`, `close`, and
+`volume` columns. Populated intraday frames use a UTC DatetimeIndex; date-only
+frames retain Python dates in their index. Empty frames keep the column schema.
+Pandas is imported only when `to_dataframe()` is called. CSV contains OHLCV only;
+`bars.metadata()` provides separate JSON-compatible instrument/query metadata to
+save alongside it. Dataset reload APIs remain future work.
+See `examples/research_exports.py` for a runnable local example.
+
+### Fixed historical ranges
+
+```python
+from pyibquant import HistoricalRangeError, Market
+
+with Market.ibkr() as market:
+    try:
+        bars = market.bars(
+            "AAPL", interval="5min", start="2025-01-01", end="2026-01-01"
+        )
+    except HistoricalRangeError as error:
+        partial = error.partial  # Only completed pages; download_complete is False.
+        print(error.remaining_start, error.remaining_end)
+        raise
+
+records = bars.to_records()
+metadata = bars.metadata()
+```
+
+Both bounds are required and are **start inclusive, end exclusive**, filtering by
+bar timestamp. Date strings/Python dates mean New York midnight for intraday bars,
+including DST. Alternatively provide timezone-aware whole-second datetimes or ISO
+datetimes with offsets; they normalize to UTC. Naive datetimes and fractional
+seconds are rejected. Daily/weekly/yearly queries require calendar dates.
+Weekly timestamps are Monday anchors and yearly timestamps are January 1: use
+aligned bounds to include a whole starting week/year. A final week/year ending
+mid-period can still be partial; bar finality is not independently verified.
+The exclusive end cannot be in the future. Fixed ranges cannot be combined with
+`duration` or `live=True`; existing lookback calls still default to `duration="1 D"`.
+
+The downloader moves backward through fixed time windows, including empty windows,
+then sorts/deduplicates and trims the result. Pages use an eight-hour maximum for
+30-second bars, one day for 1-minute bars, seven days for 5-minute bars, 28 days for
+15-minute through 4-hour bars, 365 days for daily bars, approximately five years
+for weekly inputs and ten years for yearly inputs. Internal weekly/yearly page
+boundaries align to full periods; yearly pages merge retained source months.
+Provider requests can overfetch to cover these bounds; returned rows stay in range.
+
+All history requests on a connection have a 0.25-second minimum spacing. 30-second
+requests also wait at least 11 seconds between small-bar requests and 15.1 seconds
+before repeating an identical request. Pacing state survives reconnects, waits are
+interruptible by `Market.close()`, and cache hits bypass pacing/provider requests.
+These controls track this Market connection only; other clients and IBKR's own
+throttling still apply. Long ranges may take substantial time. A fixed-range
+download does not hold the Market control lock while waiting, so cancelling other
+subscriptions remains possible. A disconnect fails that download with its partial
+result; it does not silently restart against another connection.
+
+`download_complete=True` means every planned window completed, not that all
+expected market bars exist. `download_pages`, `download_cached_pages`, and
+`empty_windows` report the work. Empty windows are retained with a warning; they
+may represent closures or unavailable data. Provider failures/timeouts raise
+`HistoricalRangeError` with the completed `partial` series and the remaining
+`[remaining_start, remaining_end)` bounds. Permission errors are never converted
+into successful empty pages. Fixed-range series cannot use `load_older()`; request
+a different range instead. Chart pagination is disabled for such datasets.
+
+### Dataset metadata and a research example
+
+`bars.metadata()` returns an independent JSON-compatible dictionary with resolved
+instrument ID, asset type, currency, exchange, multiplier, interval, TRADES data
+type, split-only adjustment setting, session configuration/available schedules,
+UTC/date timestamp conventions, query bounds and download/cache progress. Coverage
+contains observed first/last timestamps and row count, with gaps and bar finality
+explicitly **not verified**. A successful download is not a gap/holiday audit or a
+point-in-time corporate-action dataset. Metadata for manually constructed series
+leaves unverified identity fields unset.
+
+```python
+import json
+from pathlib import Path
+
+path = bars.to_csv("charts/research/bars.csv")
+Path(path).with_suffix(".metadata.json").write_text(
+    json.dumps(bars.metadata(), indent=2), encoding="utf-8"
+)
+```
+
+Freeze a dataset for later offline research:
+
+```python
+from pyibquant import BarDataset
+
+dataset = BarDataset.from_series(bars)
+dataset.save("charts/research/bars.dataset.json")
+# Later, without TWS, ibapi, pandas or PyArrow:
+dataset = BarDataset.load("charts/research/bars.dataset.json")
+closes = [bar.close for bar in dataset.snapshot()]
+```
+
+The immutable snapshot preserves bars and copied metadata together in one atomic
+JSON file. Live updates cannot change it. Loading checks format version, SHA-256
+integrity, timestamp ordering/kinds, coverage counts and requested range bounds.
+The checksum detects accidental edits; it does not establish authenticity.
+Incomplete download status remains incomplete after reload.
+
+`dataset.audit(expected_starts, finalized_through=last_final_start)` compares the
+dataset with **caller-supplied** expected bar starts. For daily bars, pass trading
+dates from your chosen calendar for the same query and hours. For other intervals,
+pass that calendar's bar starts, including early closes and period boundaries.
+The result reports `missing`, `unexpected` and `unconfirmed` timestamps, plus
+`matches_calendar`. `finalized_through` is an inclusive assertion by the caller,
+not a finality inference by the toolkit. Without it, every bar is unconfirmed.
+No weekdays, holidays or trading sessions are guessed, and an audit never changes
+the original provenance's unverified gap/finality fields. A matching timestamp
+calendar does not verify prices, volumes or point-in-time corporate actions.
+
+`pyibquant.research.simple_returns(closes)` computes fractional close-to-close
+returns, with `None` for the first observation or a zero denominator.
+`pyibquant.research.sma(closes, window=20)` computes a trailing mean, with `None`
+until a full window is available. Both accept iterables of finite numbers and
+require no broker, pandas or chart. They do not define strategy execution timing.
+
+A complete local example downloads fixed daily inputs, saves their CSV/metadata,
+and computes returns plus a descriptive close-above-SMA signal:
+
+```sh
+python examples/research_range.py AAPL --start 2025-01-01 --end 2026-01-01
+```
+
+It writes `bars.csv`, `bars.metadata.json`, `bars.dataset.json` and `signals.csv` under ignored
+`charts/research/`. Download failure exits without analyzing the partial data.
+This is a research example; it does not simulate orders, fills or strategy profits.
+Verified against local TWS on 2026-10-16: the example exported 250 AAPL daily bars
+for 2025, matching signal rows and dataset metadata.
+
+Recompute the research values offline from that frozen input:
+
+```sh
+python examples/research_saved.py charts/research/bars.dataset.json
+```
+
+Optionally pass `--calendar trading-dates.txt` (one ISO expected bar start per
+line), and `--finalized-through YYYY-MM-DD` for daily bars. The example rejects
+explicitly incomplete downloads and calendar mismatches before calculations.
+Without a calendar it computes descriptive values with coverage still unverified.
 
 ### HTML snapshot
 
@@ -111,6 +322,50 @@ weekly bars and ten years of monthly inputs for yearly candles. IBKR pacing,
 permissions and retention limits still apply. Loaded history is kept in memory;
 History/`--duration` continues to show the initial lookback.
 
+### Sessions and data freshness
+
+**Sessions: on/off** controls shading outside regular sessions and dashed New York
+calendar-day separators on intraday charts. Session boundaries come from IBKR's
+regular and extended `SCHEDULE` responses, including provider-reported early
+closes and daylight-saving offsets. Shading spans price and volume and never adds
+closed-market slots or moves the view. Date ticks identify new sessions; labels
+are spaced to avoid overlap. Missing or invalid schedules leave bars usable with
+a visible explanation and no guessed standard-hours shading. Saved snapshots
+include whatever session metadata was downloaded.
+
+`Market.bars()` skips schedule enrichment by default. Use `include_sessions=True`
+to request regular and extended `SCHEDULE` metadata separately from OHLCV, including
+when bars come from the optional cache. This flag controls metadata requests;
+`regular_hours` independently controls which trading hours the OHLCV query includes.
+
+The chart CLI explicitly enables enrichment. `market.serve(bars)` also enables it
+by default and retains the setting when selecting another chart; pass
+`market.serve(bars, include_sessions=False)` to skip it. For a shaded HTML snapshot,
+request `market.bars(..., include_sessions=True)` before calling `bars.plot()`;
+`plot()` only exports downloaded data and makes no provider requests.
+
+For enriched series, intraday history loads extend the schedule; daily/coarser
+charts request only a recent schedule for connection context. These extra requests
+do not read or write OHLCV cache entries. Only enriched live series request
+schedules after reconnect or at the five-minute refresh. Unenriched live series
+still recover and backfill OHLCV normally. Disabling enrichment leaves any
+previously downloaded metadata available without requesting more.
+
+The chart reports the last bar receipt time, subscription/reconnect state, quiet
+callbacks during a known active session, and time outside the requested session.
+A 90-second callback warning describes missing callbacks; it does not establish
+a lost connection or a market-data entitlement. Unknown schedules are labelled
+unverified. Historical bar subscriptions do not confirm a real-time/delayed feed
+type, so receiving updates is explicitly labelled **Entitlements unverified**;
+provider permission/delay warnings remain visible.
+
+Connected intraday charts show a bar-boundary countdown only while the newest bar
+covers the current time within a known requested session. The countdown respects
+IBKR's clock-aligned hourly candles (including shortened opening candles) and the
+provider's session close. It disappears when disconnected, outside session hours,
+on an old bar, or for daily/coarser charts and saved snapshots. The timer is a
+clock estimate, not confirmation that IBKR has finalized a candle.
+
 ### Live bar chart
 
 ```sh
@@ -122,8 +377,15 @@ open. The browser checks the in-memory bars every two seconds; IBKR determines
 the actual bar-update cadence. Keep the command running and press Ctrl+C to
 cancel subscriptions and disconnect. Use `--web-port 8050` for a fixed HTTP port.
 The displayed subscription status does not guarantee real-time entitlements;
-provider warnings appear above the chart. Disconnects are shown in the chart;
-restart the command to reconnect. Automatic reconnect is not implemented yet.
+provider warnings appear above the chart. Disconnects and automatic recovery are shown in the chart. Live `Market.ibkr()`
+connections retry failed connections with a bounded backoff (up to 30 seconds
+between attempts), restore active subscriptions and download fresh gap history.
+Downloaded older bars, chart zoom and manual price bounds are retained. TWS must
+still be running, logged in and configured for the same host/port/client ID;
+recovery cannot log in or repair API settings. Use `--no-reconnect` or
+`Market.ibkr(reconnect=False)` to disable recovery. `market.cancel(series)` removes
+a subscription from recovery as well as cancelling it at IBKR. Initial connection
+failures still raise an error rather than retrying indefinitely.
 
 On the connected page, enter a **Symbol**, select an **Interval**, set **History**
 (for example `1 D`, `2 W`, or `6 M`), and click **Load chart** or press Enter.
@@ -170,8 +432,8 @@ These are period identities, not claims that trading occurred on those dates.
 Daily/coarser bars are date-only.
 
 Duration accepts IBKR units such as `1 D`, `2 W`, `6 M`, and `1 Y`.
-IBKR's bar-size/duration limits and pacing rules still apply; requests are not
-automatically split into multiple downloads.
+IBKR's bar-size/duration limits and pacing rules still apply. Lookback requests
+are not automatically split; use explicit `start`/`end` ranges for paged downloads.
 
 ### Python
 
@@ -179,7 +441,7 @@ automatically split into multiple downloads.
 from pyibquant import Market
 
 with Market.ibkr() as market:
-    aapl = market.bars("AAPL", interval="1min", duration="1 D")
+    aapl = market.bars("AAPL", interval="1min", duration="1 D", include_sessions=True)
     aapl.plot()
 
 with Market.ibkr(client_id=72) as market:
@@ -269,6 +531,18 @@ mypy
 ```
 
 Offline tests simulate provider callbacks; they do not connect to an account.
+The SDK-free subset runs without `ibapi`:
+
+```sh
+python -m pytest tests/test_core.py tests/test_cache_core.py tests/test_exports.py tests/test_pacing.py tests/test_research.py
+```
+
+Development checks run locally with the manually installed IBKR Python API.
+GitHub CI and automatic SDK installation are outside the current scope. Synthetic
+unit/browser checks remain useful for development, while explicit TWS integration
+checks verify the connected workflow. The smaller subset above is only a way to
+check independent components; it does not make the full IBKR workflow standalone.
+
 The optional browser regression checks offline rendering, interaction, resizing,
 and live viewport behavior using generated synthetic bars and installed Google
 Chrome. No TWS connection or existing chart export is needed:
@@ -277,6 +551,7 @@ Chrome. No TWS connection or existing chart export is needed:
 python -m pip install -e '.[browser]'
 python tests/browser_chart_check.py
 python tests/browser_history_check.py
+python tests/browser_sessions_check.py
 ```
 
 With the live chart running on `--web-port 8050`, the separate manual integration
@@ -293,6 +568,23 @@ With caching enabled on that server, `python tests/browser_cache_check.py` check
 reused daily/yearly history pages, fresh live initialization and stable viewports.
 Install `.[dev,browser,cache]` to run the complete cache test suite; cache-specific
 unit tests skip when the optional Parquet dependency is absent.
+
+`python tests/live_exports_check.py --client-id 188` additionally verifies that
+plain research queries send no `SCHEDULE` requests, opt-in queries do, and records,
+CSV and pandas exports work after disconnecting. Install `.[pandas]` for that check.
+
+`python tests/live_ranges_check.py --client-id 189` is the explicit range check
+for intraday/daily/weekly/yearly bounds, page-cache reuse and yearly OHLCV
+consistency. It requires `.[cache]` and a running TWS/Gateway. It passed against
+local TWS on 2026-10-16; it does not connect during normal pytest runs.
+
+The separate recovery integration check uses its own data-only client and
+disconnects only that client's socket. It verifies automatic reconnect, intraday
+gap recovery, retained yearly source history and cancellation:
+
+```sh
+python tests/live_recovery_check.py --client-id 187
+```
 
 Install the official SDK before running provider tests. For an explicit manual
 integration check with TWS running:

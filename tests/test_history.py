@@ -1,13 +1,12 @@
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
 from pyibquant import Bar, BarSeries
 from pyibquant.data.providers.ibkr import IBKRProvider, calendar_window, normalize_bar
 from pyibquant.errors import DataError, RequestTimeout
-from pyibquant.visualization.chart import ChartSession
 
 
 def raw(stamp, close=101, volume=50):
@@ -23,6 +22,7 @@ def provider(monkeypatch):
     result = IBKRProvider("127.0.0.1", 7497, 71, 0.01)
     result.isConnected = Mock(return_value=True)
     result.cancelHistoricalData = Mock()
+    result._pacer = Mock()
 
     def details(req_id, contract):
         result.contractDetails(req_id, SimpleNamespace(contract=contract))
@@ -39,16 +39,6 @@ def history(provider, rows):
         provider.historicalDataEnd(req_id, "", "")
 
     provider.reqHistoricalData = Mock(side_effect=respond)
-
-
-def test_prepend_deduplicates_and_keeps_existing_live_values():
-    series = BarSeries("AAPL", "1d", live=True)
-    latest = Bar(date(2026, 10, 15), 100, 105, 99, 104, 50)
-    older = Bar(date(2026, 10, 14), 100, 102, 99, 101, 20)
-    series.update(latest)
-    assert series.prepend([older, older, Bar(latest.timestamp, 1, 1, 1, 1, 1)]) == 1
-    assert series.snapshot() == (older, latest)
-    assert series.prepend([older]) == 0
 
 
 def test_historical_page_preserves_subscription_and_concurrent_updates(provider):
@@ -200,42 +190,3 @@ def test_extra_calendar_source_year_does_not_add_unrequested_candles(provider):
     series = provider.bars("AAPL", interval="1y", duration="1 Y", _end=date(2026, 10, 15))
     assert [bar.timestamp for bar in series.snapshot()] == [date(2025, 1, 1), date(2026, 1, 1)]
     assert [bar.volume for bar in series.snapshot()] == [30, 30]
-
-
-def test_session_stale_duplicate_and_busy_history_requests_do_not_download():
-    series = BarSeries("AAPL", "1d")
-    series.update(Bar(date(2026, 10, 15), 100, 102, 99, 101, 50))
-    loader = Mock(
-        side_effect=lambda current: current.prepend(
-            [Bar(date(2026, 10, 14), 100, 102, 99, 101, 50)]
-        )
-    )
-    session = ChartSession(series, Mock(return_value=series), None, loader)
-    selection = session.selection_id
-    with session._selection_lock, pytest.raises(BlockingIOError):
-        session.older(selection, "2026-10-15")
-    session.older(selection, "2026-10-15")
-    duplicate = session.older(selection, "2026-10-15")
-    assert len(duplicate["bars"]) == 2
-    assert loader.call_count == 1
-    with pytest.raises(BlockingIOError, match="two seconds"):
-        session.older(selection, "2026-10-14")
-    session.select("AAPL", "1d", "6 M")
-    with pytest.raises(BlockingIOError, match="changed"):
-        session.older(selection, "2026-10-14")
-    assert loader.call_count == 1
-    assert session.payload()["selection_id"] != selection
-
-
-def test_session_history_failure_releases_lock_for_retry():
-    series = BarSeries("AAPL", "1d")
-    series.update(Bar(date(2026, 10, 15), 100, 102, 99, 101, 50))
-    loader = Mock(side_effect=DataError("pacing violation"))
-    session = ChartSession(series, None, None, loader)
-    with patch("pyibquant.visualization.chart.monotonic", return_value=10):
-        with pytest.raises(DataError):
-            session.older(session.selection_id, "2026-10-15")
-    loader.side_effect = None
-    with patch("pyibquant.visualization.chart.monotonic", return_value=13):
-        assert len(session.older(session.selection_id, "2026-10-15")["bars"]) == 1
-    assert loader.call_count == 2

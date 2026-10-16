@@ -158,6 +158,12 @@ def main() -> None:
         assert page.evaluate("chart.left === 0 && chart.manualRange === null")
         assert page.evaluate("chart.bars.length") == 120
         assert page.locator("#load-older").is_enabled()
+        # Fixed research ranges must not silently extend when viewing them.
+        page.evaluate("draw({...initial, requested_start: '2026-01-01'}, true)")
+        assert page.locator("#load-older").is_disabled()
+        assert "Fixed historical range" in page.locator("#history-status").inner_text()
+        page.evaluate("draw({...initial, requested_start: null}, true)")
+        assert page.locator("#load-older").is_enabled()
         assert not errors, errors
         print(
             "PASS: automatic/button pagination, stable candles/zoom/manual price scale, "

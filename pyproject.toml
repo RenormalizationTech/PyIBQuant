@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyibquant"
 version = "0.1.0.dev0"
-description = "Python-first IBKR market data and interactive research charts"
+description = "Python-first IBKR data access for quantitative research and trading workflows"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
@@ -15,6 +15,7 @@ dependencies = []
 dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14"]
 browser = ["playwright>=1.50"]
 cache = ["pyarrow>=18"]
+pandas = ["pandas>=2.2"]
 
 [project.scripts]
 pyibquant = "pyibquant.cli:main"
@@ -43,5 +44,5 @@ check_untyped_defs = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["ibapi.*", "pyarrow.*"]
+module = ["ibapi.*", "pyarrow.*", "pandas.*"]
 ignore_missing_imports = true

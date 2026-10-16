@@ -8,6 +8,10 @@ class MarketChart {
     this.legend = legend;
     this.interval = interval;
     this.bars = [];
+    this.sessions = [];
+    this.sessionDates = new Map();
+    this.dayCache = new Map();
+    this.showSessions = true;
     this.left = 0;
     this.count = 0;
     this.rightMargin = 0.1;
@@ -24,6 +28,8 @@ class MarketChart {
     this.dateFormat = new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric'});
     this.intradayDateFormat = new Intl.DateTimeFormat('en-US', {timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric'});
     this.zoneFormat = new Intl.DateTimeFormat('en-US', {timeZone: 'America/New_York', timeZoneName: 'short'});
+    this.dayFormat = new Intl.DateTimeFormat('en-CA', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'});
+    this.clockFormat = new Intl.DateTimeFormat('en-GB', {timeZone: 'America/New_York', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit'});
     this.setInterval(interval);
     this.bindEvents();
     this.observer = new ResizeObserver(() => this.resize());
@@ -45,6 +51,63 @@ class MarketChart {
     this.canvas.height = Math.round(this.height * ratio);
     this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.requestDraw();
+  }
+
+  day(time) {
+    if (typeof time !== 'number') return time;
+    if (!this.dayCache.has(time)) this.dayCache.set(time, this.dayFormat.format(this.date(time)));
+    return this.dayCache.get(time);
+  }
+
+  setSessions(sessions) {
+    this.sessions = sessions || [];
+    this.sessionDates = new Map();
+    for (const session of this.sessions) {
+      if (!this.sessionDates.has(session.date)) this.sessionDates.set(session.date, []);
+      this.sessionDates.get(session.date).push(session);
+    }
+  }
+
+  intervalSeconds() {
+    return {'30s': 30, '1min': 60, '5min': 300, '15min': 900, '30min': 1800,
+      '1h': 3600, '2h': 7200, '4h': 14400}[this.interval];
+  }
+
+  barBoundary(time) {
+    const parts = Object.fromEntries(this.clockFormat.formatToParts(this.date(time)).map(p => [p.type, p.value]));
+    const local = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
+    const seconds = this.intervalSeconds();
+    // IBKR aligns multi-hour candles to the local clock, shortening the 09:30 opener.
+    return time + seconds - local % seconds;
+  }
+
+  sessionBands(first, last, x, step, plot) {
+    if (!this.showSessions || !this.intervalSeconds()) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(plot.x, plot.y, plot.w, plot.h); ctx.clip();
+    for (let index = first; index < last; index++) {
+      const time = this.bars[index].time;
+      const day = this.day(time);
+      const sessions = this.sessionDates.get(day) || [];
+      const extended = sessions.filter(session => !session.regular);
+      const regular = sessions.filter(session => session.regular);
+      if (extended.some(session => time >= session.start && time < session.end)) {
+        const end = Math.min(this.barBoundary(time), ...extended.filter(s => s.end > time).map(s => s.end));
+        // Interpolate actual session boundaries inside large candles as well.
+        const edges = [time, end, ...regular.flatMap(s => [s.start, s.end]).filter(t => t > time && t < end)].sort((a, b) => a - b);
+        for (let part = 1; part < edges.length; part++) {
+          if (regular.some(s => edges[part - 1] >= s.start && edges[part - 1] < s.end)) continue;
+          ctx.fillStyle = '#182239';
+          ctx.fillRect(x(index) - step / 2 + (edges[part - 1] - time) / (end - time) * step,
+            plot.y, (edges[part] - edges[part - 1]) / (end - time) * step, plot.h);
+        }
+      }
+      if (index > 0 && day !== this.day(this.bars[index - 1].time)) {
+        this.line(x(index) - step / 2, plot.y, x(index) - step / 2, plot.y + plot.h, '#42516a', [3, 4]);
+      }
+    }
+    ctx.restore();
   }
 
   setData(bars) {
@@ -330,6 +393,7 @@ class MarketChart {
     const step = plot.w / this.count;
     const x = index => plot.x + (index - this.left + 0.5) * step;
     const y = price => plot.y + (high - price) / (high - low) * (priceBottom - plot.y);
+    this.sessionBands(first, last, x, step, plot);
     ctx.fillStyle = colors.text;
     // Nice decimal steps keep the price axis readable as the view changes.
     const rough = (high - low) / Math.max(2, Math.floor((priceBottom - plot.y) / 60));
@@ -346,12 +410,29 @@ class MarketChart {
     }
     const timeTicks = Math.max(1, Math.floor(plot.w / (['1d', '1w'].includes(this.interval) ? 135 : 110)));
     const stride = Math.max(1, Math.ceil(this.count / timeTicks));
+    const ticks = new Map();
     for (let index = Math.ceil((this.left - this.tickOffset) / stride) * stride + this.tickOffset; index < last; index += stride) {
+      ticks.set(index, this.timeLabel(this.bars[index].time));
+    }
+    if (this.intervalSeconds()) {
+      for (let index = first; index < last; index++) {
+        if (index === 0 || this.day(this.bars[index].time) !== this.day(this.bars[index - 1].time)) {
+          const dateLabel = this.intradayDateFormat.format(this.date(this.bars[index].time));
+          for (const candidate of ticks.keys()) if (Math.abs(x(candidate) - x(index)) < 145) ticks.delete(candidate);
+          ticks.set(index, dateLabel);
+        }
+      }
+    }
+    let labelEnd = -Infinity;
+    for (const [index, text] of [...ticks].sort((a, b) => a[0] - b[0])) {
       const px = x(index);
       this.line(px, plot.y, px, bottom, colors.grid);
-      const text = this.timeLabel(this.bars[index].time);
       const labelWidth = ctx.measureText(text).width;
-      ctx.fillText(text, Math.max(plot.x, Math.min(px - labelWidth / 2, plot.x + plot.w - labelWidth)), bottom + 23);
+      const labelX = Math.max(plot.x, Math.min(px - labelWidth / 2, plot.x + plot.w - labelWidth));
+      if (labelX >= labelEnd + 10) {
+        ctx.fillText(text, labelX, bottom + 23);
+        labelEnd = labelX + labelWidth;
+      }
     }
     this.line(plot.x + plot.w, plot.y, plot.x + plot.w, bottom, '#314258');
     this.line(plot.x, priceBottom + 11, plot.x + plot.w, priceBottom + 11, '#314258');
@@ -426,13 +507,14 @@ let historyLoading = false;
 let historyError = '';
 let historyNote = '';
 let historyAvailable = true;
+let fixedRange = initial.requested_start != null;
 let generation = 0;
 const olderButton = document.getElementById('load-older');
 const historyStatus = document.getElementById('history-status');
 function historyState() {
   olderButton.disabled = !historyEnabled || loading || historyLoading || !historyAvailable;
   olderButton.textContent = historyLoading ? 'Loading older…' : historyError ? 'Retry older history' : 'Load older';
-  historyStatus.textContent = !historyEnabled ? 'Older history needs a connected chart.' :
+  historyStatus.textContent = fixedRange ? 'Fixed historical range. Request a new range to extend it.' : !historyEnabled ? 'Older history needs a connected chart.' :
     historyLoading ? 'Fetching earlier bars…' : !historyAvailable ? 'No older bars returned.' : historyNote;
 }
 symbolInput.value = initial.symbol;
@@ -442,12 +524,45 @@ hoursInput.value = initial.regular_hours === false ? 'extended' : 'regular';
 fields.disabled = !controlsEnabled;
 if (controlsEnabled) document.getElementById('controls-note').textContent = 'US stocks and ETFs · History examples: 1 D, 2 W, 6 M · Load chart or press Enter';
 const chart = new MarketChart(document.getElementById('market-canvas'), document.getElementById('legend'), initial.interval);
+let currentPayload = initial;
+let browserConnected = true;
+function freshness(payload, now = Date.now() / 1000) {
+  if (!payload.live || !liveEndpoint) return 'Snapshot';
+  if (['disconnected', 'reconnecting', 'closed'].includes(payload.connection_state)) return payload.connection_state;
+  const sessions = (payload.sessions || []).filter(s => s.regular === (payload.regular_hours !== false));
+  if (!sessions.some(s => now >= s.start && now < s.end)) {
+    return sessions.some(s => s.date === chart.day(now)) ? 'Outside requested session' : 'Session hours unverified';
+  }
+  const received = Date.parse(payload.last_live_update || payload.last_update || '') / 1000;
+  if (Number.isFinite(received) && now - received > 90) return 'No bar callback for over 90s';
+  return payload.last_live_update ? 'Receiving bar updates · Entitlements unverified' : 'Subscribed · Waiting for bar updates';
+}
+function updateClock(now = Date.now() / 1000) {
+  const payload = currentPayload;
+  const received = payload.last_update ? chart.timeLabel(Date.parse(payload.last_update) / 1000, true) : 'unavailable';
+  const state = browserConnected ? freshness(payload, now) : 'Chart server unreachable';
+  document.getElementById('freshness').textContent = `${state} · Last bar received: ${received}`;
+  const seconds = chart.intervalSeconds();
+  const latest = chart.bars.at(-1);
+  let countdown = '';
+  if (browserConnected && seconds && payload.live && liveEndpoint && payload.connection_state === 'subscribed') {
+    const session = (payload.sessions || []).find(s => s.regular === (payload.regular_hours !== false) && now >= s.start && now < s.end);
+    if (session && latest && now >= latest.time && now < Math.min(chart.barBoundary(latest.time), session.end)) {
+      const remaining = Math.ceil(Math.min(chart.barBoundary(latest.time), session.end) - now);
+      countdown = `Current bar boundary in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')} · Provider confirmation may arrive later`;
+    }
+  }
+  document.getElementById('countdown').textContent = countdown;
+}
 function showError(message) { error.hidden = !message; error.textContent = message || ''; }
 function draw(payload, reset = false) {
+  browserConnected = true;
+  currentPayload = payload;
   reset = reset || payload.symbol !== currentSymbol || payload.interval !== currentInterval ||
     (payload.selection_id != null && payload.selection_id !== selectionId);
   selectionId = payload.selection_id ?? selectionId;
-  historyAvailable = !payload.history_exhausted;
+  fixedRange = payload.requested_start != null;
+  historyAvailable = !payload.history_exhausted && !fixedRange;
   currentSymbol = payload.symbol;
   currentInterval = payload.interval;
   document.getElementById('symbol').textContent = payload.symbol;
@@ -455,6 +570,7 @@ function draw(payload, reset = false) {
   document.title = `${payload.symbol} · PyIBQuant`;
   chart.setInterval(payload.interval);
   if (reset) {
+    chart.dayCache.clear();
     chart.bars = []; chart.hover = null; chart.setAutoscale(true);
     historyError = ''; historyNote = ''; selectionError = '';
     symbolInput.value = payload.symbol;
@@ -462,10 +578,14 @@ function draw(payload, reset = false) {
     durationInput.value = payload.duration || '1 D';
     hoursInput.value = payload.regular_hours === false ? 'extended' : 'regular';
   }
+  chart.setSessions(payload.sessions);
   chart.setData(payload.bars);
+  document.getElementById('sessions-note').textContent = chart.intervalSeconds() ?
+    payload.schedule_error || (chart.sessions.length ? 'Shaded: outside IBKR regular sessions · Dashed: New York date boundaries' : 'Session schedule unavailable; shading omitted.') : '';
   status.textContent = `${payload.status} · ${payload.bars.length.toLocaleString()} bars${payload.live && liveEndpoint ? ' · Updates checked every 2s' : ''}`;
   showError([selectionError, historyError, payload.error, ...(payload.warnings || [])].filter(Boolean).join('\n'));
   historyState();
+  updateClock();
 }
 draw(initial);
 async function loadOlder() {
@@ -511,6 +631,12 @@ autoscale.onclick = () => chart.setAutoscale(chart.manualRange !== null);
 document.getElementById('right-margin').onchange = event => chart.setRightMargin(Number(event.target.value));
 document.getElementById('fit').onclick = () => chart.fit();
 document.getElementById('latest').onclick = () => chart.latest();
+document.getElementById('sessions').onclick = event => {
+  chart.showSessions = !chart.showSessions;
+  event.target.setAttribute('aria-pressed', String(chart.showSessions));
+  event.target.textContent = `Sessions: ${chart.showSessions ? 'on' : 'off'}`;
+  chart.requestDraw();
+};
 document.getElementById('chart-controls').addEventListener('submit', async event => {
   event.preventDefault();
   if (!controlsEnabled || loading || historyLoading) return;
@@ -551,9 +677,12 @@ async function poll() {
     if (!loading && started === generation) draw(payload);
   } catch (e) {
     if (!loading && started === generation) {
+      browserConnected = false;
+      updateClock();
       status.textContent = 'Chart connection interrupted';
       showError(`${e.message}. Keep the Python process running; retrying…`);
     }
   } finally { setTimeout(poll, 2000); }
 }
 if (liveEndpoint) setTimeout(poll, 2000);
+if (liveEndpoint) setInterval(() => updateClock(), 1000);

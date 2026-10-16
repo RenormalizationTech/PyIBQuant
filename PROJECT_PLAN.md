@@ -1,25 +1,39 @@
 # PyIBQuant
 
-**A Python quantitative research, visualization, backtesting, and algorithmic trading platform for Interactive Brokers users.**
+**A Python-first toolkit for IBKR data access, quantitative research, backtesting and algorithmic trading, with supporting visualization.**
 
 > PyIBQuant is an independent open-source project and is not affiliated with or endorsed by Interactive Brokers LLC.
 
 ---
 
-## Implementation checkpoint — 2026-10-15
+## Implementation checkpoint — 2026-10-16
 
 The initial IBKR-to-chart slice is implemented, with live bar updates and browser
 symbol/interval/history and regular/extended-hours controls. Chart foundations now
 include price/time scaling, older-history pagination, optional Parquet caching,
 2-hour/4-hour/weekly/yearly intervals and New York display with automatic EST/EDT.
 The renderer is our own HTML Canvas code, with no TradingView library dependency.
-Next: session shading and separators. This remains a development prototype.
+Provider session shading, session date ticks, an intraday countdown, receipt-time
+status and automatic reconnect/backfill are also implemented. Research requests
+now skip session enrichment by default; records/CSV and optional pandas exports
+work independently of a chart. Local automated
+and explicit TWS integration checks support development; CI and automatic SDK
+installation are outside the current scope.
+This remains a development prototype.
 
-The visualization goal has expanded to a daily charting workspace that can replace
-TradingView for frequent IBKR US stock/ETF usage. Deliver it incrementally; full
-parity is not a v0.1 requirement. [TODO.md](TODO.md) is the detailed visualization
-backlog. [HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where
-to resume. Later phases below remain plans, not implemented APIs.
+Product direction: prioritize convenient Python access to IBKR for quantitative
+research, backtesting and algorithmic trading. Interactive visualization supports
+those workflows. A standalone charting product or TradingView replacement is not
+the current objective. Users supply the IBKR Python API, logged-in TWS/Gateway and
+required account/data permissions; automating that setup is not a milestone.
+
+Fixed-range data queries, basic dataset metadata and a returns/SMA research
+example are now implemented with offline and live TWS validation. Frozen dataset
+save/reload and explicit calendar/finality comparison are also implemented. Next
+build the first equity backtest.
+ [TODO.md](TODO.md) orders the work.
+[HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where to resume.
+Later phases below remain plans, not implemented APIs.
 
 # 1. Vision
 
@@ -58,7 +72,34 @@ Live Trade
 Refine
 ```
 
-PyIBQuant should support this entire research-to-trading loop without forcing every experiment into a trading-strategy abstraction.
+PyIBQuant should support this entire research-to-trading loop without forcing every
+experiment into a trading-strategy abstraction. Users should be able to fetch and
+analyze data directly from Python. Plotting is an optional inspection step.
+
+Near-term order: reliable historical datasets and Python exports, reusable research
+calculations, a small equity backtester, result inspection, then paper-trading
+integration. Expand chart/workspace features when a research or trading use case
+needs them.
+
+---
+
+## Audience and options priority
+
+Equities and ETFs provide the initial general-user workflow. Options trading and
+backtesting are a major product use case and the project owner's primary personal
+interest. Validate shared acquisition, research and accounting components through
+a small equity backtest, while avoiding assumptions that every instrument is a
+stock or every contract has a multiplier of one.
+
+Prioritize a stock/option streaming quote API and a focused options pilot after
+the shared data/equity-backtest slice. It need not wait for broad-universe scanners,
+advanced chart workspaces or feature parity. Start with option contract identity,
+bid/ask/spread, available IV/Greeks and collection of selected quotes. Add historical
+option dataset imports, explicit spread/fill models and expiry/exercise/assignment
+handling as requirements for an options backtest. Acquisition from IBKR and import
+of research datasets remain separate paths; do not promise reconstruction of
+expired option histories from IBKR. Sampled quote recordings only represent the
+updates the application receives.
 
 ---
 
@@ -720,10 +761,11 @@ Potential research topics:
 
 PyIBQuant should provide browser-based interactive visualization.
 
-The visualization direction is an independently designed daily charting workspace
-for IBKR stock/ETF traders, integrated with quantitative research. It should
-eventually replace TradingView for that workflow. Do not attempt full feature
-parity before useful releases; follow the milestones in [TODO.md](TODO.md).
+Visualization is a supporting tool for inspecting source data, research signals,
+backtest entries/exits, equity curves and trading context. Keep the existing native
+Canvas renderer useful, but prioritize the Python research/backtesting workflow
+over chart parity, saved workspaces or a standalone charting application.
+Follow the priorities in [TODO.md](TODO.md).
 
 ## Market Chart
 
@@ -933,7 +975,7 @@ Real use cases should drive the abstraction.
 - [x] Configure `pytest`
 - [x] Configure `ruff`
 - [x] Configure type checking
-- [ ] Configure GitHub Actions
+- CI and automatic SDK installation: outside current scope; run checks locally.
 - [x] Establish Python version policy
 - [ ] Verify no credentials or private information are committed
 
@@ -963,7 +1005,7 @@ Python User
 - [x] normalized timestamps
 - [x] canonical bar representation
 - [x] structured exceptions
-- [ ] basic reconnect handling
+- [x] basic reconnect handling and fresh gap backfill for active bar subscriptions
 - [x] unit tests without requiring live IBKR
 - [x] integration tests clearly separated from unit tests
 
@@ -985,7 +1027,7 @@ bars = market.bars(
 
 # 20. Phase 2 — Interactive Visualization
 
-**Goal:** Make PyIBQuant immediately useful.
+**Goal:** Inspect market data and research results with supporting charts.
 
 ```text
 IBKR
@@ -1097,7 +1139,27 @@ Do not attempt to simulate an entire exchange.
 
 ---
 
-# 24. Phase 6 — Broad Market Monitor
+# 24. Phase 6 — Paper Trading
+
+Only strategies that have already been tested should reach this stage.
+
+### TODO
+
+- [ ] broker abstraction
+- [ ] IBKR broker implementation
+- [ ] order state management
+- [ ] reconciliation
+- [ ] disconnect recovery
+- [ ] structured logging
+- [ ] risk/safety controls
+- [ ] paper-account testing
+
+Live automated trading is explicitly out of scope until paper trading is
+robust.
+
+---
+
+# 25. Phase 7 — Broad Market Monitor
 
 **Goal:** Monitor approximately the S&P 500 universe.
 
@@ -1123,7 +1185,7 @@ moving-average distance
 
 ---
 
-# 25. Phase 7 — Options Foundation
+# 26. Phase 8 — Options Foundation
 
 **Goal:** Make options a first-class component.
 
@@ -1153,7 +1215,7 @@ selected = chain.filter(
 
 ---
 
-# 26. Phase 8 — Options Visualization and Research
+# 27. Phase 9 — Options Visualization and Research
 
 ### TODO
 
@@ -1170,7 +1232,7 @@ selected = chain.filter(
 
 ---
 
-# 27. Phase 9 — Options Backtesting
+# 28. Phase 10 — Options Backtesting
 
 Only begin once historical options representation is understood.
 
@@ -1185,26 +1247,6 @@ Only begin once historical options representation is understood.
 - [ ] assignment
 - [ ] multi-leg positions
 - [ ] option-specific P&L attribution
-
----
-
-# 28. Phase 10 — Paper Trading
-
-Only strategies that have already been tested should reach this stage.
-
-### TODO
-
-- [ ] broker abstraction
-- [ ] IBKR broker implementation
-- [ ] order state management
-- [ ] reconciliation
-- [ ] disconnect recovery
-- [ ] structured logging
-- [ ] risk/safety controls
-- [ ] paper-account testing
-
-Live automated trading is explicitly out of scope until paper trading is
-robust.
 
 ---
 
@@ -1294,6 +1336,41 @@ rather than:
 IBKR API objects
 ```
 
+## Architecture readiness for research and execution
+
+The existing provider boundary, immutable `Bar` values, `BarSeries.snapshot()`,
+UTC/date normalization and optional chart imports are useful foundations. Keep
+those pieces. The current prototype is a market-data implementation; it has no
+backtest engine or trading-control API yet. Address these boundaries incrementally:
+
+- Implemented: research requests skip session enrichment by default;
+  `include_sessions=True` opts in. Charts enable it explicitly. Records/CSV exports
+  and optional pandas DataFrames provide independent snapshots. Keep complete
+  explicit dataset bounds/basic metadata are also implemented. Dataset reload,
+  calendar gap audits and completed-bar policies remain future work.
+- Fixed-range downloads now release the Market control lock and fail with partial
+  data if their provider generation disconnects. Subscription cancellation stays
+  responsive. Legacy lookback loads/recovery still serialize operations; future
+  broker controls must keep their own responsive path.
+- Chart selection currently cancels the prior chart subscription. Give chart and
+  strategy consumers independent ownership so navigation cannot stop a strategy's
+  feed. Keep multi-symbol research independent of the single-chart HTTP session.
+- Live candles are replaceable snapshots. Define bar-update versus completed-bar
+  events, event time/order, historical replay and partial-bar policies before
+  sharing signals between backtest and live use. Browser polling/countdowns are
+  presentation only and must not drive strategy execution.
+- Explicit bounds and basic instrument/source/session/adjustment metadata are
+  implemented. Add dataset reload, calendar/finality audits and frozen-input
+  provenance for reproducible backtests. The exact-query cache is not yet a
+  research dataset store or an offline data-loader API.
+- Add a separate broker execution component for order IDs, acknowledgements,
+  partial fills, positions, reconciliation and user controls. The current
+  data-only reconnect/resubscribe path must not be reused to resubmit orders.
+
+Develop these changes through the next research/backtest/paper-trading slices;
+there is no need to rebuild the renderer or introduce a general framework first.
+Keep local correctness tests and explicit IBKR integration tests.
+
 ## Definition of Done
 
 A task is complete when:
@@ -1308,101 +1385,83 @@ A task is complete when:
 
 ---
 
-# 32. v0.1 Target
+# 32. v0.1 Foundation — Implemented Prototype
 
-Do NOT attempt to implement the entire roadmap before releasing something useful.
+The first slice established IBKR data access, immutable bar snapshots, optional
+caching, live updates/recovery and a supporting chart. It is a foundation for the
+Python workflow. Continued chart polish is not the next release gate.
 
-The first release should do one thing very well:
-
-> Connect to IBKR, obtain market data, and visualize it interactively.
-
-A successful v0.1 should support something conceptually like:
+Existing API (requires the documented IBKR setup for data acquisition):
 
 ```python
 from pyibquant import Market
 
-market = Market.ibkr()
+with Market.ibkr() as market:
+    series = market.bars("AAPL", interval="1min", duration="1 D")
+    bars = series.snapshot()
 
-aapl = market.bars(
-    "AAPL",
-    interval="1min",
-    duration="1D",
-)
-
-aapl.plot()
-```
-
-The result should be an interactive browser chart with:
-
-- candlesticks;
-- volume;
-- zoom;
-- pan.
-
-That is enough for v0.1.
-
----
-
-# 33. v0.2 Target
-
-Add the first complete research loop:
-
-```text
-Get historical data
-        ↓
-Compute signal
-        ↓
-Backtest signal
-        ↓
-Calculate performance
-        ↓
-Plot trades
-```
-
-Use one or two simple strategies to validate the architecture.
-
-The purpose is not to develop profitable strategies.
-
-The purpose is to make sure the research/backtesting abstractions work.
-
----
-
-# 34. v0.3 Target
-
-Introduce broad-market monitoring:
-
-```text
-S&P 500
-   ↓
-Market scanner
-   ↓
-Signals / ranking
-   ↓
-Watchlist
-   ↓
-Detailed chart
+# Python analysis can consume these immutable values after the connection closes.
+closes = [bar.close for bar in bars]
+# series.plot() is optional inspection.
 ```
 
 ---
 
-# 35. v0.4 Target
+# 33. Next Target — Research Data and First Equity Backtest
 
-Introduce options:
+Records/CSV and optional pandas exports, opt-in session enrichment, explicit
+historical start/end queries with paging/pacing, basic dataset metadata, and
+simple-return/SMA research calculations are implemented. The research-range example
+is verified with synthetic inputs and live TWS data (2026-10-16).
+Frozen datasets now save/reload atomically with integrity checks and preserved
+provenance. An offline research example consumes them without the SDK or optional
+dependencies. Calendar comparisons require caller-supplied expected bar starts;
+finality requires an explicit caller assertion. Exchange calendar generation and
+automatic finality certification are not implemented.
+Next complete the first equity backtest:
 
 ```text
-Underlying
-    ↓
-Option Chain
-    ↓
-Contract Selection
-    ↓
-IV / Greeks
-    ↓
-Option Visualization
+IBKR historical dataset
+        ↓
+Python research signal
+        ↓
+Equity backtest with explicit execution timing and costs
+        ↓
+Trade log, equity curve and performance metrics
+        ↓
+Optional result chart
 ```
 
-Options should only be introduced after the core equity data model has
-proven stable.
+Validate the API with one or two simple strategies before generalizing it. Research
+calculations and backtests consume collected datasets; they must not depend on an
+open chart or a continuously connected broker. Data acquisition still requires
+the user's IBKR setup and permissions. Data/research APIs above are implemented;
+the backtest engine, performance accounting and trading controls remain planned.
+
+---
+
+# 34. Following Target — User-Controlled Paper Trading
+
+Reuse signal calculations with an IBKR paper broker, while keeping historical
+simulation and broker execution separate. Implement order IDs, order/fill state,
+position/cash reconciliation, explicit start/stop/cancel controls, and reconnect
+handling before moving toward live execution. Chart navigation must not control
+strategy subscriptions or order lifecycle. This target follows the first equity
+backtest; it does not depend on chart feature parity or options implementation.
+
+---
+
+# 35. Options Pilot and Later Expansion
+
+Options trading/backtesting is an explicit product priority. After the shared
+research/equity-backtest foundation, introduce a stock/option quote API and an
+options pilot with contract discovery, bid/ask/spread, available IV/Greeks and
+selected quote collection. This can precede broad-market monitoring; the phase
+catalog above does not require implementing scanners before the options pilot.
+
+Full options backtesting follows suitable historical datasets, fill/cost models,
+contract multipliers and expiry/exercise/assignment behavior. Broad universes,
+advanced surfaces and chart workspaces follow concrete workflow needs.
 
 ---
 
