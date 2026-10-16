@@ -29,8 +29,10 @@ required account/data permissions; automating that setup is not a milestone.
 
 Fixed-range data queries, basic dataset metadata and a returns/SMA research
 example are now implemented with offline and live TWS validation. Frozen dataset
-save/reload and explicit calendar/finality comparison are also implemented. Next
-build the first equity backtest.
+save/reload and explicit calendar/finality comparison are also implemented. A first
+daily equity backtest now handles prior-close targets, next-open fills, fixed
+whole-share sizing, configurable costs and performance accounting. Next prioritize
+stock/option quotes and an options pilot; broker-connected paper execution remains planned.
  [TODO.md](TODO.md) orders the work.
 [HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where to resume.
 Later phases below remain plans, not implemented APIs.
@@ -1418,7 +1420,14 @@ provenance. An offline research example consumes them without the SDK or optiona
 dependencies. Calendar comparisons require caller-supplied expected bar starts;
 finality requires an explicit caller assertion. Exchange calendar generation and
 automatic finality certification are not implemented.
-Next complete the first equity backtest:
+The first daily equity backtest is now implemented with long/flat boolean targets,
+fixed whole-share sizing, prior-close/next-open timing and configurable flat
+commission/adverse slippage. It requires complete fixed-range input and caller
+confirmation of finality. An optional expected calendar rejects gaps. Both
+above-SMA and SMA-crossover strategies validate the API. Fills/trades/rejections,
+cash/positions/equity, returns and drawdown are exported with assumptions and an
+exact input fingerprint. The following path now works through performance results;
+optional result charts remain on the backlog:
 
 ```text
 IBKR historical dataset
@@ -1436,7 +1445,8 @@ Validate the API with one or two simple strategies before generalizing it. Resea
 calculations and backtests consume collected datasets; they must not depend on an
 open chart or a continuously connected broker. Data acquisition still requires
 the user's IBKR setup and permissions. Data/research APIs above are implemented;
-the backtest engine, performance accounting and trading controls remain planned.
+the daily backtest engine and basic performance accounting above are implemented.
+Portfolio/options simulation and broker trading controls remain planned.
 
 ---
 
@@ -1446,8 +1456,9 @@ Reuse signal calculations with an IBKR paper broker, while keeping historical
 simulation and broker execution separate. Implement order IDs, order/fill state,
 position/cash reconciliation, explicit start/stop/cancel controls, and reconnect
 handling before moving toward live execution. Chart navigation must not control
-strategy subscriptions or order lifecycle. This target follows the first equity
-backtest; it does not depend on chart feature parity or options implementation.
+strategy subscriptions or order lifecycle. This target can reuse the first equity
+backtest foundation; it does not depend on chart feature parity. The stock/option
+quote and options research pilot is the next implementation priority.
 
 ---
 

@@ -38,3 +38,22 @@ def sma(values: Iterable[float], window: int = 20) -> tuple[float | None, ...]:
         trailing.append(value)
         output.append(fmean(trailing) if len(trailing) == window else None)
     return tuple(output)
+
+
+def above_sma(closes: Iterable[float], window: int = 20) -> tuple[bool, ...]:
+    """Long when close exceeds its trailing SMA; warmup/equality target flat."""
+    values = _values(closes)
+    return tuple(average is not None and value > average
+                 for value, average in zip(values, sma(values, window), strict=True))
+
+
+def sma_crossover(
+    closes: Iterable[float], fast: int = 10, slow: int = 20,
+) -> tuple[bool, ...]:
+    """Long while fast SMA exceeds slow SMA; warmup/equality target flat."""
+    values = _values(closes)
+    fast_values, slow_values = sma(values, fast), sma(values, slow)
+    if fast >= slow:
+        raise ValueError('fast must be smaller than slow')
+    return tuple(left is not None and right is not None and left > right
+                 for left, right in zip(fast_values, slow_values, strict=True))

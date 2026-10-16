@@ -22,14 +22,15 @@ interactive charts.
 Python exports, optional session enrichment, fixed historical ranges, dataset
 metadata and a returns/SMA research example are implemented and verified against
 TWS. Frozen dataset save/reload and explicit calendar/finality audits also work
-without a broker. Next: the first equity backtest, followed by
-user-controlled paper trading. Equities/ETFs are the initial workflow
+without a broker. A first daily equity backtest now simulates next-open execution,
+costs and performance from these frozen inputs. Next: stock/option quote access
+and an options research pilot, with user-controlled paper trading on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
 the project owner's primary personal interest. A focused stock/option quote and
 options research pilot follows the shared foundation, ahead of broad scanners or
 advanced chart-workspace features.
 The existing chart is an optional data/results viewer. Order placement, account
-state and strategy execution are not implemented yet. See the project plan for
+state and broker-connected strategy execution are not implemented yet. See the project plan for
 the data/strategy/broker boundaries to address before adding them.
 
 ## First slice: IBKR → Python → HTML chart
@@ -263,6 +264,70 @@ Optionally pass `--calendar trading-dates.txt` (one ISO expected bar start per
 line), and `--finalized-through YYYY-MM-DD` for daily bars. The example rejects
 explicitly incomplete downloads and calendar mismatches before calculations.
 Without a calendar it computes descriptive values with coverage still unverified.
+
+### First daily equity backtest
+
+```python
+from datetime import date
+from pyibquant import BarDataset
+from pyibquant.backtest import backtest_equity
+from pyibquant.research import above_sma
+
+dataset = BarDataset.load("charts/research/bars.dataset.json")
+signals = above_sma([bar.close for bar in dataset.snapshot()], window=20)
+result = backtest_equity(
+    dataset, signals, finalized_through=date(2025, 12, 31),
+    initial_cash=10_000, shares=1, commission=1, slippage_bps=5,
+)
+print(result.metrics())
+result.save("charts/backtest/results.json")
+```
+
+This initial simulator requires complete fixed-range daily regular-hours equity
+TRADES bars, split-only adjustment and multiplier one. Supply exactly one boolean
+long/flat target per bar. Each signal acts at the **next supplied bar's open**;
+unchanged targets do not rebalance. Built-in `above_sma` and `sma_crossover` use
+only trailing closes, with flat targets during warmup/equality. Caller-provided
+signals must obey the same information timing; execution delay cannot detect
+look-ahead inside a supplied signal.
+
+`shares` is a fixed positive whole-share quantity in the adjusted price basis.
+No borrowing or shorting is modeled. A buy that cannot afford price plus fees is
+rejected; the next target may retry at the next open. Slippage is adverse in basis
+points, commission is a flat amount in the instrument's currency **per fill**,
+and both are included once in P&L. These are configurable simulation assumptions,
+not an IBKR commission schedule. Final positions remain valued at the last close;
+there is no invented final fill or estimated final exit cost. The last signal has
+no following open and cannot execute.
+
+`finalized_through` is the caller's confirmation that all supplied bars are final.
+Pass optional `expected_dates` from an independent calendar to reject missing or
+unexpected trading dates. Without it, results explicitly report unchecked calendar
+coverage and may execute across gaps. No total-return/dividend, settlement, tax,
+interest, volume/liquidity or broker account model is included. Split-adjusted
+prices are research units; historical nominal-share execution and corporate-action
+cash flows are not reconstructed. Intraday, options and portfolio simulation are
+outside this initial engine.
+
+The frozen result includes fills, rejected orders, completed trades, a daily
+cash/position/equity/return/drawdown curve, assumptions, the optional expected
+calendar and an exact input fingerprint matching the saved dataset. Metrics
+include fractional total return, negative fractional maximum drawdown, realized
+and unrealized P&L, commissions, modeled slippage and completed-trade win rate
+(`None` with no completed trades). Ending open positions contribute to equity
+and unrealized P&L, not completed-trade statistics. No annualization is inferred.
+
+Run either strategy offline and export reproducible inputs plus JSON/CSV results:
+
+```sh
+python examples/backtest_equity.py charts/research/bars.dataset.json --finalized-through 2025-12-31 --commission 1 --slippage-bps 5
+python examples/backtest_equity.py charts/research/bars.dataset.json --finalized-through 2025-12-31 --strategy sma-cross --fast 10 --slow 20 --output-dir charts/backtest/crossover
+```
+
+Optional `--calendar trading-dates.txt` uses one expected ISO date per line.
+The example writes `inputs.dataset.json`, `strategy.json`, `results.json` and
+CSV logs for fills, trades, equity and rejections under ignored `charts/backtest/`.
+No broker connection or optional dependency is needed.
 
 ### HTML snapshot
 

@@ -53,15 +53,19 @@ not implemented features.
 Acceptance: a Python script obtains a defined historical dataset, computes a
 signal, and exports reproducible inputs/results. Optional charts inspect the work.
 
-## Following milestone: first equity backtest
+## First daily equity backtest
 
-- [ ] Single-instrument equity backtest driven by a simple, explicit signal
-- [ ] Execution timing that avoids look-ahead; configurable commissions and slippage
-- [ ] Trade log, equity curve, returns and drawdown metrics
-- [ ] Freeze research inputs and define completed-bar versus partial-bar signal timing
-- [ ] A second example to validate the API before generalizing a strategy framework
+- [x] Single-instrument daily long/flat equity backtest with fixed whole-share sizing
+- [x] Next-open execution of prior-close targets; configurable commissions/slippage
+- [x] Trade/fill/rejection logs, equity curve, returns and drawdown metrics
+- [x] Frozen input fingerprint, required finality assertion and optional calendar check
+- [x] Validate two strategies (above-SMA and SMA crossover) before generalizing a framework
 - [ ] Optional entry/exit and performance visualizations
-- [ ] Then: explicit paper-trading workflow through IBKR
+- [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
+
+Next: implement the stock/option quote API and options research pilot. Keep
+paper execution separate; the simulator does not submit orders or model account
+settlement, dividends, taxes, liquidity or historical nominal-share execution.
 
 ## Execution architecture prerequisites
 

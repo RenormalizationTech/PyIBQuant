@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 
 import pyibquant
 from pyibquant import Bar, BarDataset, BarSeries, HistoricalRangeError, Market
+from pyibquant.backtest import backtest_equity
 from pyibquant.data.history import normalize_range
 from pyibquant.research import simple_returns, sma
 
@@ -24,6 +25,8 @@ assert resources.joinpath('py.typed').is_file()
 assert resources.joinpath('visualization', 'chart.js').is_file()
 bars = BarSeries('DEMO', '1d')
 bars.update(Bar(date(2026, 1, 1), 100, 103, 99, 102, 10))
+bars.asset_type, bars.multiplier, bars.data_type = 'equity', 1, 'TRADES'
+bars.adjustment = 'splits_only'
 assert bars.metadata()['coverage']['rows'] == 1
 assert simple_returns([100, 110])[0] is None
 assert sma([100, 110], 2) == (None, 105)
@@ -42,6 +45,12 @@ with TemporaryDirectory() as directory:
     dataset = BarDataset.load(BarDataset.from_series(bars).save(Path(directory) / 'bars.json'))
     assert dataset.snapshot() == bars.snapshot()
     assert dataset.audit([date(2026, 1, 1)]).matches_calendar
+    bars.update(Bar(date(2026, 1, 2), 104, 106, 103, 105, 10))
+    bars.requested_start, bars.requested_end = date(2026, 1, 1), date(2026, 1, 3)
+    bars.download_complete = True
+    result = backtest_equity(BarDataset.from_series(bars), [True, False],
+                             finalized_through=date(2026, 1, 2))
+    assert result.metrics()['ending_shares'] == 1
     try:
         bars.to_dataframe()
     except ImportError as exc:

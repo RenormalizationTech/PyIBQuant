@@ -110,11 +110,18 @@ class BarDataset:
                      open=bar.open, high=bar.high, low=bar.low, close=bar.close,
                      volume=bar.volume) for bar in self._bars]
 
-    def save(self, path: str | Path) -> Path:
-        """Atomically replace one file with all rows, provenance and integrity digest."""
-        payload = dict(metadata=self.metadata(), bars=[
+    def _payload(self) -> dict[str, Any]:
+        return dict(metadata=self.metadata(), bars=[
             {**row, "timestamp": row["timestamp"].isoformat()} for row in self.to_records()
         ])
+
+    def fingerprint(self) -> str:
+        """Content digest of frozen bars and provenance, matching the saved file."""
+        return hashlib.sha256(_encoded(self._payload()).encode()).hexdigest()
+
+    def save(self, path: str | Path) -> Path:
+        """Atomically replace one file with all rows, provenance and integrity digest."""
+        payload = self._payload()
         digest = hashlib.sha256(_encoded(payload).encode()).hexdigest()
         document = dict(format="pyibquant.bars", version=1, sha256=digest, payload=payload)
         target = Path(path).expanduser().resolve()

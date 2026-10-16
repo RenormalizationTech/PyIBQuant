@@ -1,8 +1,9 @@
 # Development handoff
 
 Checkpoint: 2026-10-16. This document records the chart-foundations implementation
-and local validation. The prior checkpoint is committed. The session/recovery/research follow-up is currently
-in the working tree; no push or release was performed. Start with `git status` and `git log -1` after transferring work.
+and local validation. Snapshot commit e42aede records the session/recovery/research
+and frozen-dataset foundations. The daily backtest follow-up is in the working
+tree; no push or release was performed. Start with `git status` and `git log -1` after transferring work.
 
 ## Where to resume
 
@@ -19,7 +20,8 @@ backtesting and algorithmic trading. Bar exports and optional session enrichment
 are now implemented. Fixed historical ranges, basic dataset metadata, simple
 returns/SMA and a research example have since been added with offline and live TWS
 verification. Frozen dataset reload and explicit calendar/finality comparisons are
-also implemented. Next: the first equity backtest. Charts are supporting inspection tools. Saved chart workspaces
+also implemented. The first daily equity backtest now works offline. Next:
+stock/option quote access and an options research pilot. Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
 Audience priority: equities/ETFs are the general-user entry point; options
@@ -180,6 +182,31 @@ optional --calendar (one ISO timestamp per line) rejects mismatches before
 analysis. Explicitly incomplete downloads are rejected. Calendar/finality inputs
 are user assertions, not facts derived from the dataset.
 
+## First daily equity backtest (2026-10-16)
+
+`pyibquant.backtest.backtest_equity(dataset, signals, finalized_through=..., ...)`
+accepts a frozen complete fixed-range daily regular-hours equity TRADES dataset,
+with split-only adjustment and multiplier one. Boolean long/flat targets computed
+after the close act at the next supplied open. Fixed whole-share sizing, adverse
+slippage and flat per-fill commission are configurable; no borrowing/shorting.
+Insufficient cash produces explicit rejections. Final positions stay marked to
+the last close, with no forced exit or future execution of the last signal.
+The caller must assert all bars are final; optional expected_dates must match
+exactly. Without that calendar, gap coverage remains explicitly unchecked.
+
+The result is frozen and includes fill/trade/rejection logs, daily equity/returns/
+drawdown, realized/unrealized P&L, costs, optional expected calendar and the exact
+input fingerprint. BarDataset.fingerprint() matches the on-disk SHA-256 digest.
+Adjusted-price research units do not reconstruct historical nominal-share fills;
+dividends, interest, settlement, taxes, liquidity and account rules are excluded.
+There is no order placement or broker-connected strategy loop.
+
+`research.above_sma` and `research.sma_crossover` provide trailing-only signals;
+`examples/backtest_equity.py` runs either offline and saves inputs, strategy,
+JSON results and CSV logs. Defaults are explicit simulation inputs, not IBKR fees.
+The next implementation priority is the stock/option quote API and options pilot.
+Optional result charts and paper execution controls remain planned.
+
 ## What exists
 
 | File | Responsibility |
@@ -188,6 +215,9 @@ are user assertions, not facts derived from the dataset.
 | `src/pyibquant/data/providers/ibkr.py` | Official SDK callbacks, contracts, requests, normalization, cancellation |
 | `src/pyibquant/data/cache.py` | Optional exact-query Parquet cache, expiry, inspection and clearing |
 | `src/pyibquant/bars.py` | Immutable Bar values and mutable thread-protected BarSeries snapshots |
+| `src/pyibquant/backtest.py` | Daily equity simulation, timing/cost assumptions and frozen results |
+| `examples/backtest_equity.py` | Offline above-SMA/crossover runs with reproducible inputs and JSON/CSV results |
+| `tests/test_backtest.py` | Hand-calculated accounting, cash rejection, finality/calendar checks and prefix causality |
 | `src/pyibquant/dataset.py` | Frozen research datasets, atomic save/reload and explicit calendar/finality comparison |
 | `examples/research_saved.py` | Offline analysis of a frozen dataset without IBKR/pandas/Parquet |
 | `tests/test_dataset.py` | Roundtrip, corruption, immutability, calendar/finality and offline example regressions |
@@ -340,6 +370,25 @@ python tests/browser_controls_check.py
 ```
 
 ## Validation recorded at this checkpoint
+
+Daily equity backtest follow-up (2026-10-16): 199 unit tests, Ruff and mypy pass.
+Hand-calculated tests cover delayed signal execution, adverse slippage, per-fill
+fees, realized/unrealized P&L, equity returns/drawdown, ending positions, rejected
+buys/exits and cash preservation. Prefix tests verify trailing-only SMA signals
+and that changing future prices/signals cannot change earlier results. Invalid
+inputs, incomplete downloads, unconfirmed finality, calendar mismatches and
+arithmetic overflow are rejected. Both example strategies are exercised offline.
+
+The base wheel without ibapi/pandas/PyArrow passes the expanded smoke check and
+runs both strategies on 250 saved AAPL 2025 daily bars, with 1 share, initial cash
+10000, commission 1 per fill and 5 bps adverse slippage. Above-SMA(20) completed
+12 trades; SMA crossover(10,20) completed 7. Exact input fingerprints match the
+saved dataset. These are integration checks, not strategy recommendations.
+The independently supplied 2025 dates match all 250 rows; its explicit holiday
+list follows the [NYSE 2025 calendar](https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf)
+plus the [Nasdaq January 9 closure notice](https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2025-1).
+The generated calendar and outputs remain ignored under charts/. This does not
+add or certify an automatic exchange-calendar provider.
 
 Frozen dataset follow-up (2026-10-16): 161 unit tests, Ruff and mypy pass.
 Tests cover date/UTC/DST roundtrips, live-update isolation, nested metadata copies,
