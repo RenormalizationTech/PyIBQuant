@@ -364,9 +364,9 @@ class IBKRProvider(EWrapper, EClient):
                 state.actual_type = actual
 
     def tickOptionComputation(
-        self, reqId: int, tickType: int, tickAttrib: int, impliedVol: float,
-        delta: float, optPrice: float, pvDividend: float, gamma: float, vega: float,
-        theta: float, undPrice: float,
+        self, reqId: int, tickType: int, tickAttrib: int, impliedVol: float | None,
+        delta: float | None, optPrice: float | None, pvDividend: float | None,
+        gamma: float | None, vega: float | None, theta: float | None, undPrice: float | None,
     ) -> None:
         request = self._requests.get(reqId)
         if request is not None and request.quote is not None:

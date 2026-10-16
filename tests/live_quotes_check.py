@@ -38,7 +38,8 @@ def main():
     document = quote.to_dict()
     target = Path('charts/quote-check')
     target.mkdir(parents=True, exist_ok=True)
-    (target / f'{quote.instrument.instrument_id}.json').write_text(json.dumps(document, indent=2))
+    name = f'{quote.instrument.instrument_id}-{quote.requested_data_type}.json'
+    (target / name).write_text(json.dumps(document, indent=2))
     print(f'{quote.instrument.symbol} {quote.instrument.asset_type}: '
           f'bid={quote.bid}, ask={quote.ask}, '
           f'bid_size={quote.bid_size}, ask_size={quote.ask_size}; '

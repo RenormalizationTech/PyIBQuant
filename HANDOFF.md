@@ -21,7 +21,9 @@ are now implemented. Fixed historical ranges, basic dataset metadata, simple
 returns/SMA and a research example have since been added with offline and live TWS
 verification. Frozen dataset reload and explicit calendar/finality comparisons are
 also implemented. The first daily equity backtest now works offline. Next:
-live option snapshot verification, discovery and selected quote collection. Charts are supporting inspection tools. Saved chart workspaces
+in-session live option verification, discovery and selected quote collection.
+Frozen AAPL option bid/ask and model IV/Greeks now pass against TWS.
+Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
 Audience priority: equities/ETFs are the general-user entry point; options
@@ -236,9 +238,14 @@ real data-only callback path. Stock verification passed. The user selected SPY,
 SPY, local symbol SPY   261120C00770000, multiplier 100. The snapshot ended with
 no bid/ask/Greeks and zero sizes; TWS returned 10091 naming SPY ARCA/TOP/ALL
 (additional API market-data permissions). Feed type callback was live; that does
-not establish field availability. Asked whether to test delayed mode or let the
-user check TWS permissions before retrying live. Do not buy subscriptions, change
-account settings or silently relabel the empty quote as verified live BBO.
+not establish field availability. The user instead chose AAPL 2026-11-20 340 C.
+That contract resolved to conId 845042071, trading class AAPL, multiplier 100.
+Its live request returned no prices during the overnight check (~01:11 EDT).
+An explicitly requested frozen snapshot then passed: bid 12.65, ask 12.95,
+sizes 891/125 and model IV/delta/gamma/vega/theta. Reported feed type was frozen.
+In-session live option BBO/Greeks remain unverified; the SPY permission message
+is not evidence that the AAPL snapshot needs a new subscription. Do not buy
+subscriptions, change account settings or relabel frozen quotes as live.
 Continuous subscriptions, chart bid/ask display, recording and historical option
 imports remain planned. See README for exact limits and IBKR source links.
 
@@ -411,6 +418,23 @@ python tests/browser_controls_check.py
 
 ## Validation recorded at this checkpoint
 
+AAPL option follow-up (2026-10-16): 234 tests, Ruff and mypy pass. The real SDK
+normalizes unavailable option computations to None, which initially exposed an
+unguarded delta comparison. The handler now accepts optional fields and preserves
+available Greeks without killing the connection. Its Decimal unset-size sentinel
+(2**127-1) is also normalized to None rather than reported as an enormous size.
+Regression tests cover both Decimal and float forms, all-missing computations,
+mixed available/unavailable model fields and legitimate zero Greek values.
+The installed-wheel subset without ibapi/pandas passes 100 tests and skips six
+pandas checks. The diagnostic script retains separate files for requested modes.
+
+The user-selected AAPL 2026-11-20 340 C resolved with multiplier 100. Overnight
+live mode returned no BBO; frozen mode passed with bid/ask 12.65/12.95, sizes
+891/125 and nonmissing model IV, delta, gamma, vega and theta. Feed type callback
+confirmed frozen, with no permission warning in that snapshot. Data is last
+available, not a verified current or executable quote. No in-session live option
+claim is made. Raw diagnostic outputs remain Git-ignored.
+
 Level-one snapshot follow-up (2026-10-16): 231 unit tests, Ruff and mypy
 (18 source files) pass. The bare installed wheel passes SDK-free smoke checks;
 the installed-wheel subset without ibapi/pandas passes 98 tests, with six pandas
@@ -421,8 +445,9 @@ JSON export and standalone examples. The actual AAPL standard snapshot passed on
 port 7497/client 193: bid/ask/sizes arrived and IBKR reported live feed type.
 The selected SPY option resolved but returned no bid/ask/Greeks with 10091;
 that specific empty snapshot/partial-permission combination has a regression test.
-Generated quote records are ignored under charts/quote-check/. Live option BBO and
-Greeks remain unverified until the data-mode/permission issue is resolved.
+Generated quote records are ignored under charts/quote-check/. The later AAPL
+frozen check above verifies option BBO/model Greeks; in-session live verification
+remains pending.
 
 Daily equity backtest follow-up (2026-10-16): 199 unit tests, Ruff and mypy pass.
 Hand-calculated tests cover delayed signal execution, adverse slippage, per-fill

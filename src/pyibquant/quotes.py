@@ -137,8 +137,10 @@ def _number(value: Any, *, minimum: float = 0, allow_zero: bool = True) -> float
         result = float(value)
     except (ValueError, TypeError, OverflowError):
         return None
-    # IBKR's unset double sentinel is near 1.8e308, never a usable quote/Greek.
-    if not isfinite(result) or abs(result) >= 1e100 or result < minimum \
+    # SDK unset Decimal is 2**127-1; unset double is near 1.8e308. Compare
+    # after float conversion to handle both native Decimal and decoded floats.
+    if not isfinite(result) or result == float(2**127 - 1) \
+            or abs(result) >= 1e100 or result < minimum \
             or (not allow_zero and result == 0):
         return None
     return result
@@ -174,19 +176,22 @@ class _QuoteState:
             self.tick_types[name] = tick_type
             self.delayed |= tick_type >= 66
 
-    def computation(self, tick_type: int, values: tuple[float, ...]) -> None:
+    def computation(self, tick_type: int, values: tuple[float | None, ...]) -> None:
         source = {10: 'bid', 11: 'ask', 12: 'last', 13: 'model',
                   80: 'bid', 81: 'ask', 82: 'last', 83: 'model'}.get(tick_type)
         if source is None:
             return
         iv, delta, price, dividend, gamma, vega, theta, underlying = values
+        normalized_delta = _number(delta, minimum=-1)
+        if normalized_delta is not None and normalized_delta > 1:
+            normalized_delta = None
         with self.lock:
             if self.completed_at is not None:
                 return
             self.delayed |= tick_type >= 80
             self.greeks[source] = OptionGreeks(
                 source, tick_type >= 80, datetime.now(UTC), _number(iv),
-                _number(delta, minimum=-1) if delta <= 1 else None,
+                normalized_delta,
                 _number(price), _number(dividend), _number(gamma), _number(vega),
                 _number(theta, minimum=-1e99) if theta != -2 else None,
                 _number(underlying, allow_zero=False),

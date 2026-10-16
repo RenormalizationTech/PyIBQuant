@@ -64,7 +64,7 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Optional entry/exit and performance visualizations
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
-Next: resolve live option verification data permissions or test delayed mode, then
+Next: verify live options during their trading session, then
 add discovery and selected quote collection for the options research pilot. Keep
 paper execution separate; the simulator does not submit orders or model account
 settlement, dividends, taxes, liquidity or historical nominal-share execution.
@@ -79,7 +79,10 @@ settlement, dividends, taxes, liquidity or historical nominal-share execution.
 - [x] Preserve available bid/ask/last/model IV/Greeks separately (offline verified)
 - [x] Live AAPL stock snapshot verification against TWS
 - [x] Resolve user-selected SPY 2026-11-20 770 C identity/multiplier against TWS
-- [ ] Live option quote/Greeks verification (TWS 10091, SPY ARCA/TOP/ALL; awaiting mode/permissions decision)
+- [x] Frozen AAPL 2026-11-20 340 C bid/ask and model IV/Greeks verified via TWS
+- [x] Handle SDK-normalized None Greeks and UNSET_DECIMAL sizes
+- [ ] In-session live option quote/Greeks verification (overnight live request had no prices)
+- [ ] Optional SPY retry after resolving its 10091 SPY ARCA/TOP/ALL permission message
 - [ ] Option-chain discovery and selected contract quote collection
 - [ ] Continuous quote subscriptions and chart bid/ask display
 - [ ] Historical quote imports and options-specific spread/fill/expiry semantics

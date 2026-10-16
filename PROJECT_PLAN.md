@@ -33,8 +33,9 @@ save/reload and explicit calendar/finality comparison are also implemented. A fi
 daily equity backtest now handles prior-close targets, next-open fills, fixed
 whole-share sizing, configurable costs and performance accounting. Next prioritize
 the options pilot: stock/explicit-option Level-one snapshots now work, with stock
-feed verification against TWS and option callback tests offline. Live option
-verification, discovery and recording come next. Broker-connected paper execution
+feed verification and frozen AAPL option bid/ask/model IV/Greeks verified against
+TWS. In-session live option verification, discovery and recording come next.
+Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
 [HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where to resume.
@@ -1474,9 +1475,12 @@ actual multipliers retained. Requested/reported feed type, delayed tick IDs,
 local receipt times, missing/crossed quotes and partial entitlements remain
 explicit. Available bid/ask/last/model computations are kept separately.
 Stock live verification passed. The selected SPY 2026-11-20 770 C contract
-resolved, but bid/ask/Greeks verification is blocked by TWS error 10091
-(additional API data permissions, SPY ARCA/TOP/ALL); delayed-mode versus live
-permission verification awaits user input.
+resolved but returned error 10091 (SPY ARCA/TOP/ALL) without bid/ask/Greeks. The
+user then selected AAPL 2026-11-20 340 C: its frozen snapshot returned bid/ask
+and model IV/Greeks with confirmed frozen feed type. The overnight live request
+returned no prices; an in-session live check remains pending. SDK-normalized None
+Greeks and unset Decimal sizes are now handled without disconnecting or inventing
+large sizes. No subscription or account settings were changed.
 This is snapshot acquisition, not continuous streaming, chain discovery,
 historical quotes, chart bid/ask enrichment or a complete options backtest engine.
 

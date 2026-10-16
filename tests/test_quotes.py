@@ -249,3 +249,21 @@ def test_partial_permission_message_without_prices_is_not_a_successful_live_bbo(
     assert quote.bid_size == 0 and quote.ask_size == 0
     assert any('10091' in warning for warning in quote.warnings)
     assert quote.spread is None
+
+
+def test_sdk_normalized_none_greeks_do_not_break_connection_or_discard_quotes(provider):
+    send = response(provider)
+
+    def reply(req_id, *args):
+        provider.tickOptionComputation(req_id, 10, 0, None, None, None, None,
+                                       None, None, None, None)
+        provider.tickOptionComputation(req_id, 13, 0, .3, .5, 4, 0, 0, 0, None, 340)
+        send(req_id, *args)
+    provider.reqMktData = Mock(side_effect=reply)
+    quote = provider.quote(Option('AAPL', date(2026, 11, 20), 340, 'C'))
+    bid, model = quote.greeks
+    assert bid.source == 'bid' and bid.delta is None and bid.implied_volatility is None
+    assert model.source == 'model' and model.delta == .5 and model.theta is None
+    assert model.gamma == 0 and model.vega == 0 and model.pv_dividend == 0
+    assert quote.bid == 100 and quote.ask == 102
+    assert provider._connection_error is None and not provider._requests

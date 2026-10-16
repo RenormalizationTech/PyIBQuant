@@ -24,8 +24,9 @@ metadata and a returns/SMA research example are implemented and verified against
 TWS. Frozen dataset save/reload and explicit calendar/finality audits also work
 without a broker. A first daily equity backtest now simulates next-open execution,
 costs and performance from these frozen inputs. Level-one quote snapshots support
-stocks and explicit option selectors, with stock snapshots verified against TWS.
-Next: live option verification, contract discovery and selected quote collection;
+stocks and explicit option selectors, with live stock and frozen option snapshots
+verified against TWS. Next: in-session live option verification, contract discovery
+and selected quote collection;
 user-controlled paper trading remains on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
 the project owner's primary personal interest. A focused options research pilot
@@ -350,8 +351,11 @@ Choose a contract appropriate to your research and data permissions; the option
 above illustrates selector syntax. The option path has offline callback tests.
 The user-selected SPY 2026-11-20 770 C resolved successfully, but TWS returned
 error 10091 (additional API data permissions, SPY ARCA/TOP/ALL) and no bid/ask
-or Greeks. Live option BBO/Greeks verification remains pending. AAPL stock
-snapshot acquisition and feed-type confirmation passed against TWS on 2026-10-16.
+or Greeks. The alternative AAPL 2026-11-20 340 C returned frozen bid/ask and
+model IV/Greeks on 2026-10-16, with reported feed type frozen. Its live request
+returned no prices during the overnight check; in-session live option verification
+remains pending. Live AAPL stock snapshots also passed. Missing SDK-normalized
+Greeks and unset Decimal sizes are preserved as None.
 
 `Market.quote()` calls **`reqMktData(snapshot=True, regulatorySnapshot=False)`**,
 separately from historical bars. It returns one immutable `Quote` after

@@ -80,3 +80,14 @@ def test_quote_example_keeps_snapshot_available_after_context_exit(tmp_path, mon
     saved = json.loads(target.read_text())
     assert saved['bid'] == 100 and saved['spread'] == 2
     market.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize('value', [Decimal(2**127 - 1), float(2**127 - 1)])
+def test_sdk_unset_decimal_size_is_missing_not_an_enormous_bid_size(value):
+    pending = state()
+    pending.tick(0, value, size=True)
+    pending.tick(3, value, size=True)
+    pending.completed_at = datetime.now(UTC)
+    quote = pending.snapshot()
+    assert quote.bid_size is None and quote.ask_size is None
+    assert quote.to_dict()['bid_size'] is None
