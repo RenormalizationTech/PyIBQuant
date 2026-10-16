@@ -28,6 +28,13 @@ def _encoded(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def _number(value: Any) -> float:
+    # Preserve JSON integer/float representation so reload keeps the input digest.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError('Dataset OHLCV values must be JSON numbers (or null volume)')
+    return value
+
+
 @dataclass(frozen=True)
 class CoverageAudit:
     """Comparison to caller-supplied expected bar starts, not an exchange calendar."""
@@ -154,8 +161,9 @@ class BarDataset:
             metadata = payload["metadata"]
             bars = tuple(
                 Bar(_stamp(row["timestamp"], metadata["timestamp_kind"]),
-                    float(row['open']), float(row['high']), float(row['low']), float(row['close']),
-                    None if row['volume'] is None else float(row['volume']))
+                    _number(row['open']), _number(row['high']),
+                    _number(row['low']), _number(row['close']),
+                    None if row['volume'] is None else _number(row['volume']))
                 for row in payload["bars"]
             )
             return cls._create(bars, metadata)

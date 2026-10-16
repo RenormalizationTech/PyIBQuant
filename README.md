@@ -8,7 +8,7 @@ Charts help inspect data, signals and results. Live IBKR access requires a manua
 installed `ibapi`, a running and logged-in TWS or IB Gateway, and the account and
 market-data permissions needed for the requested instruments. Implemented features
 include market data, frozen datasets, research calculations, daily equity
-backtests, stock/option quotes and interactive charts.
+backtests, a first intraday single-option backtest, stock/option quotes and interactive charts.
 Broker-connected algorithmic execution remains planned.
 
 ## Project documents
@@ -33,8 +33,9 @@ intraday option history are implemented. `Market.bars(Option(...), start=..., en
 data_type=...)` reuses historical paging, pacing and optional exact-query caching.
 The superseded recording/replay stack and recorded-quote simulator were removed.
 
-**Next:** build a historical-bar option backtest with explicit signal timing,
-fill and cost assumptions, then expand financial research/performance analytics.
+A first historical-bar option backtest now supports single-contract long/flat
+TRADES/MIDPOINT research with explicit synthetic next-open fills and costs.
+**Next:** expand financial research/performance reports and execution modeling.
 Paper execution comes later. Historical bars do not supply quote receipt times,
 quote sizes or historical Greeks.
 
@@ -402,6 +403,72 @@ The example writes `inputs.dataset.json`, `strategy.json`, `results.json` and
 CSV logs for fills, trades, equity and rejections under ignored `charts/backtest/`.
 No broker connection or optional dependency is needed.
 
+### First intraday option backtest
+
+```python
+from datetime import datetime
+from pyibquant import BarDataset
+from pyibquant.option_backtest import backtest_option
+from pyibquant.research import above_sma
+
+inputs = BarDataset.load("charts/option-history/bars.dataset.json")
+result = backtest_option(
+    inputs, above_sma([bar.close for bar in inputs.snapshot()], window=20),
+    fill_model="next_bar_open",
+    finalized_through=datetime.fromisoformat("2026-10-16T16:00:00-04:00"),
+    contracts=1, commission_per_contract=0.65, slippage_bps=10,
+)
+print(result.metrics())
+result.save("charts/option-backtest/results.json")
+```
+
+This is a single-contract **long/flat premium-price simulation** on complete,
+fixed-range intraday USD option TRADES or MIDPOINT inputs. `fill_model` is required
+to explicitly select synthetic next-supplied-open execution. A signal computed
+using one bar's close acts no earlier than the following supplied bar's open;
+overlapping bars are rejected. The last target cannot execute. Signals supplied
+by callers remain their responsibility; the built-in strategies use trailing closes.
+
+`contracts` is a fixed positive integer, with no scaling, shorting or borrowing.
+Premium cash flows and position values use the **resolved multiplier**, including
+nonstandard multipliers, rather than assuming 100. Commission is cash **per contract
+per side**; slippage adversely shifts the premium in basis points. Costs are
+configurable model inputs, not an IBKR fee schedule. Insufficient cash rejects the
+fill and subsequent targets may retry. Existing positions remain marked at the last
+source close with no forced sale or estimated exit fees.
+
+`finalized_through` must be timezone-aware: it asserts that all bars whose starts
+are at/before that timestamp are complete. `expected_times` optionally supplies
+expected timezone-aware bar starts from an independent calendar; otherwise gap
+coverage remains unverified and execution may cross a gap. Result fill/rejection
+logs identify `signal_bar_start` and `execution_time` explicitly.
+
+Neither TRADES nor MIDPOINT bars establishes an executable price. This model has
+no spread, volume/liquidity, size or partial-fill constraints. BID/ASK-only inputs
+are rejected because direction-aware spread execution needs another model. All
+bars must precede the contract's expiry date in New York: expiry-day/later inputs
+are rejected. Exercise, assignment, expiry settlement, adjusted deliverables,
+interest, taxes, settlement restrictions and account-specific rules are excluded.
+Saved pre-expiry history remains usable offline after the contract expires.
+
+```sh
+python examples/backtest_option.py charts/option-history/bars.dataset.json \
+  --fill-model next_bar_open --finalized-through 2026-10-16T16:00:00-04:00 \
+  --commission-per-contract 0.65 --slippage-bps 10
+```
+
+The example supports `--strategy above-sma` or `--strategy sma-cross`, the same
+window/fast/slow controls as the equity example, and optional `--calendar` with one
+ISO timestamp per line. It saves frozen inputs, strategy settings, results and
+CSV fill/trade/rejection/equity logs under `charts/option-backtest/`. Results retain
+source/contract metadata, input fingerprint, assumptions, realized/unrealized P&L,
+fees, slippage, returns and drawdowns; no intraday annualization is inferred.
+
+Both strategies were run offline on the saved 78-bar AAPL option datasets from
+TWS, using TRADES and MIDPOINT independently. Accounting reconciliation and input
+fingerprint preservation passed. This validates the workflow, not strategy quality
+or historical executability. No new broker request is required for backtesting.
+
 ### Stock and option quote snapshots
 
 ```python
@@ -519,8 +586,8 @@ Option discovery/snapshots and frozen quote recovery passed explicit TWS checks.
 These supporting tools do not gate historical research. The recording-specific
 JSONL APIs, rotation/replay examples and recorded-quote options simulator were
 removed during scope cleanup; their implementation history is recoverable from
-Git commit `59da0e5`. Only the equity backtest is currently implemented. The next
-options slice requests historical data directly from IBKR.
+Git commit `59da0e5`. Selected-option history now requests IBKR directly; the
+intraday option backtest above consumes its saved inputs without a broker.
 
 ### HTML snapshot
 

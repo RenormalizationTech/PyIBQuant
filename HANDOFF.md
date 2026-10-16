@@ -2,7 +2,8 @@
 
 Checkpoint: 2026-10-16. The primary workflow is on-demand IBKR historical data →
 Python research → backtesting. Selected-option historical acquisition is implemented;
-the historical-bar option backtest is next.
+a first single-contract historical-bar option backtest is also implemented.
+Next: broader research/performance reports and improved execution modeling.
 Do not require live recording, a large local archive or external historical-data
 providers. Research/backtesting comes before broker-connected paper execution.
 
@@ -54,7 +55,7 @@ Changes are saved as local checkpoints; no remote push or release is implied.
 - Optional native Canvas charts, sessions, history loading, live bar recovery and
   browser controls. Charts remain supporting inspection tools.
 
-There is currently no options backtest. Historical option acquisition is implemented.
+Historical option acquisition and a first intraday option backtest are implemented.
 Do not describe the removed recorded-quote prototype as implemented functionality.
 No recording/rotation/replay API is exported. Do not reintroduce that stack as a
 prerequisite for research or automatically download whole option chains.
@@ -87,26 +88,51 @@ prerequisite for research or automatically download whole option chains.
   `charts/option-history-check/{TRADES,MIDPOINT,BID,ASK,cache}/`. They are optional
   experiment inputs, not a required market-data archive.
 
-## Next — historical-bar option backtest
+## Option backtest checkpoint — 2026-10-16
 
-Build a small single-contract model using saved historical inputs, preserving
-contract multiplier and price-source semantics. Define prior-bar signals, next-bar
-execution, commissions/slippage, sizing and finality requirements explicitly.
-MIDPOINT does not establish executable bid/ask fills. Handle unavailable inputs
-honestly; do not infer quote sizes, historical Greeks or chain membership from bars.
-Then expand financial research/performance analytics and reproducible reports.
-Paper execution, exercise/assignment and multi-leg models remain later work.
+- `src/pyibquant/option_backtest.py`: `backtest_option()` and immutable result/logs.
+  Single contract long/flat, fixed whole contracts, USD TRADES/MIDPOINT intraday
+  inputs. Requires `fill_model="next_bar_open"` and timezone-aware finality assertion.
+- Prior-close targets execute at the next supplied open. Overlapping bars are
+  rejected. Cash flows and marks use the resolved multiplier; commission is per
+  contract per side, slippage adverse in basis points. Insufficient cash rejects
+  fills; last-bar signals cannot execute and final positions remain marked.
+- Synthetic prices do not establish historical executable fills. BID/ASK-only
+  inputs, expiry-day/later bars, shorting, exercise/assignment/settlement and
+  adjusted-deliverable modeling are outside this first model. Saved pre-expiry
+  data remains usable after expiry. No wall-clock restriction on offline analysis.
+- Result retains input fingerprint/metadata, targets, assumptions, optional
+  calendar, fills/trades/rejections and cash/position/equity/return/drawdown curve.
+  Metrics reconcile realized plus unrealized net P&L with total equity change.
+- `examples/backtest_option.py` runs above-SMA or SMA-cross, saving exact frozen
+  inputs, strategy settings, JSON results and CSV logs. Both strategies passed on
+  the saved 78-bar AAPL MIDPOINT and TRADES inputs with costs; no TWS calls needed.
+  Outputs are ignored under `charts/option-backtest-check/{MIDPOINT,TRADES}/`.
+- Fixed an existing dataset loader issue: integer OHLCV values used to become
+  floats, changing the fingerprint after reload. Numeric representation is now
+  preserved; integrity verification still applies and missing volume remains null.
+- Validation: 336 tests plus style/typing checks. Tests cover hand-calculated
+  nonstandard multiplier/cost accounting, losses/open positions, cash rejection,
+  next-bar timing/lookahead isolation, overlapping bars, expiry, invalid inputs,
+  source restrictions, calendar/finality, overflow, atomic save and runnable examples.
+  A clean SDK-free wheel also passed offline equity/option simulation and dataset
+  reload checks without optional dependencies. No chart code changes in this slice;
+  previous browser regression remains applicable.
+
+## Next — research and execution-model improvements
+
+Expand research/performance reports and comparisons on frozen inputs. A paired
+BID/ASK model could add direction-aware spread pricing using synchronized source
+bars, while preserving the limits of OHLC aggregates. Lifecycle and multi-leg
+models need separate explicit scope. Paper execution remains later work.
 
 Implementation entry points:
 
-- `src/pyibquant/research.py` / `backtest.py`: broker-independent calculations and
-  equity simulator; add the option model without changing equity assumptions.
-- `src/pyibquant/bars.py` / `dataset.py`: saved contract/query provenance, nullable
-  volume, explicit caller-supplied calendar/finality audits.
-- `src/pyibquant/market.py` / `data/providers/ibkr.py`: completed bounded option
-  acquisition, reused `_resolve_option()`, paging/pacing and exact-query cache.
-- `examples/research_option_history.py`, `examples/research_saved.py` and
-  `tests/test_option_history.py`: runnable acquisition/offline workflow and regressions.
+- `src/pyibquant/option_backtest.py`, `examples/backtest_option.py` and
+  `tests/test_option_backtest.py`: new option simulation, reports and regressions.
+- `src/pyibquant/research.py` / `backtest.py`: shared research and equity simulator.
+- `src/pyibquant/bars.py` / `dataset.py`: provenance, nullable volume and audits.
+- `src/pyibquant/market.py` / `data/providers/ibkr.py`: bounded option acquisition.
 
 IBKR excludes expired options and option end-of-day data from historical access.
 Scope initial work to available intraday history for a resolvable option. Current

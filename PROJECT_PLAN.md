@@ -39,8 +39,10 @@ reconnect are implemented and verified with frozen AAPL data.
 The recorded-quote options experiment and its recording/replay infrastructure have
 been removed to keep the software focused on on-demand IBKR history. Selected-option
 intraday history and saved-input returns/SMA research are now implemented and
-verified against TWS after exchange hours. Next: a historical-bar option backtest
-and broader research/performance analytics.
+verified against TWS after exchange hours. A first single-contract intraday
+option backtest now runs offline with explicit synthetic next-open fills, resolved
+multiplier and per-contract costs. Next: broader research/performance reports and
+execution modeling.
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
@@ -111,8 +113,9 @@ stock/option snapshots and independent streaming remain supporting capabilities;
 Explicit-contract intraday option history now supports bounded queries, all four
 TRADES/MIDPOINT/BID/ASK sources, exact identity/multiplier, caching and saved-input
 returns/SMA research. After-hours TWS validation passed for one completed AAPL
-option session. Next build financial research and a bar-based options backtest
-with explicit execution assumptions.
+option session. The first bar-based option backtest is implemented for long/flat
+TRADES/MIDPOINT inputs with explicit synthetic next-open execution. Expand
+financial research/performance reports and execution modeling next.
 The removed recorded-quote simulator is not the historical backtest model; do not
 invent sizes/Greeks/receipt timestamps for historical bars. Current chain discovery is not a historical
 point-in-time chain. Expired options and option EOD history are outside IBKR's
@@ -1262,7 +1265,7 @@ Only begin once historical options representation is understood.
 - [ ] historical option-chain interface
 - [ ] point-in-time contract selection
 - [ ] expiration handling
-- [ ] option execution model
+- [x] First single-contract long/flat synthetic next-open execution model (TRADES/MIDPOINT)
 - [ ] bid/ask modeling
 - [ ] exercise
 - [ ] assignment
@@ -1274,7 +1277,7 @@ Only begin once historical options representation is understood.
 # 29. Historical Data Scope — IBKR Only
 
 The current software uses IBKR historical requests on demand for supported
-instruments, including selected options as the next implementation slice.
+instruments, including selected unexpired options using bounded intraday queries.
 Availability, permissions and broker limitations define the scope. Do not add
 external providers, mandatory archives or broad option-market ingestion under the
 current plan. Keep provider-specific logic inside the existing IBKR boundary.
@@ -1463,8 +1466,10 @@ calculations and backtests consume collected datasets; they must not depend on a
 open chart or a continuously connected broker. Data acquisition still requires
 the user's IBKR setup and permissions. Data/research APIs above are implemented;
 the daily backtest engine and basic performance accounting above are implemented.
-The recorded-quote option simulator was removed; the historical-bar option engine
-is planned after IBKR option history is available.
+The recorded-quote option simulator was removed. The first historical-bar option
+engine now consumes complete saved intraday TRADES/MIDPOINT inputs, with resolved
+multiplier, next-open synthetic fills and per-contract costs. Expiry-day bars and
+BID/ASK-only execution remain outside this model.
 Portfolio simulation, broader option lifecycle models and broker controls remain planned.
 
 ---
@@ -1478,9 +1483,9 @@ position/cash reconciliation, explicit start/stop/cancel controls, and reconnect
 handling before moving toward live execution. Chart navigation must not control
 strategy subscriptions or order lifecycle. This target can reuse the first equity
 backtest foundation; it does not depend on chart feature parity. The stock/option
-quote and options research pilot has since been implemented (section 35);
-live-session capture and offline simulation were verified on 2026-10-16.
-Broader live fill/valuation checks and execution prerequisites remain before broker execution.
+quote foundation and historical option research/backtest are implemented (section 35).
+The superseded capture experiment was removed. Offline simulation consumes bounded
+IBKR historical inputs; broader execution models and broker prerequisites remain.
 
 ---
 
@@ -1506,12 +1511,19 @@ feed broker-independent returns/SMA research. After-hours TWS checks on 2026-10-
 returned 78 five-minute bars per source for AAPL 2026-11-20 340 C; cache reuse and
 offline reload passed. Local checks: 289 tests, Ruff, mypy and Chrome regression.
 
-Next: a historical-bar options backtest with explicit timing, execution and cost
-assumptions, followed by broader financial research/performance reports. No live
-recorder or huge local collection is required. The option backtest is not yet
-implemented. IBKR's history limitations define scope; expired-option history,
-option EOD history, historical chain reconstruction and contract Greeks are not
-promised. Paper execution, exercise/assignment, multi-leg models and broad surfaces
+Implemented: first single-contract option long/flat backtest, requiring explicit
+synthetic next-open execution and caller-confirmed finality. It preserves multiplier,
+source, frozen-input fingerprint and costs in its accounting/reports. Both example
+strategies passed offline on saved TRADES/MIDPOINT AAPL inputs. Local validation:
+336 tests plus typing/style checks. Integer-valued datasets now retain the same
+fingerprint on save/reload. No broker request was needed for this slice.
+
+Next: broader financial research/performance reports and improved execution models.
+No live recorder or huge local collection is required. The option model does not
+reconstruct executable bid/ask fills, lifecycle settlement, adjusted deliverables
+or historical chain membership. BID/ASK-only and expiry-day inputs are rejected.
+IBKR's unavailable expired-option/EOD history and historical Greeks remain outside
+scope. Paper execution, exercise/assignment, multi-leg models and broad surfaces
 remain later work driven by supported research requirements.
 
 ---

@@ -40,6 +40,7 @@ def test_atomic_roundtrip_preserves_identity_queries_and_timestamp_semantics(tmp
     assert loaded.snapshot() == source.snapshot()
     assert loaded.metadata() == source.metadata()
     assert loaded.to_records() == source.to_records()
+    assert loaded.fingerprint() == frozen.fingerprint() == json.loads(path.read_text())['sha256']
     assert loaded.metadata()['coverage']['bar_finality'] == 'not_verified'
     assert loaded.metadata()['instrument_id'] == 123
     assert loaded.metadata()['last_received_at'] == source.last_update.isoformat()

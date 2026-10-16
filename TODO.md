@@ -4,16 +4,18 @@ Last reconciled: 2026-10-16. Checkboxes describe implemented behavior, not a rel
 The full project direction remains in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
-Current priority: on-demand IBKR historical requests for selected options, followed
-by historical-data research and backtesting. Live recording, bulk data collection
-and external data providers are not required workflows. The obsolete recording,
-rotation/replay stack and recorded-quote simulator were removed. Discovery,
-snapshots, independent streams/reconnect and the equity
-research/backtest workflow remain. Cleanup validation: 261 tests, Ruff, mypy and
-an SDK-free wheel smoke check passed at cleanup. Option historical acquisition is now
-implemented: 289 tests, Ruff, mypy and the offline Chrome regression pass.
-After-hours TWS checks returned 78 bars per source for one completed AAPL option
-session, with cache reuse and broker-free research verified.
+Current priority: research/performance reports and improved execution modeling on
+saved IBKR historical inputs. Equity daily backtesting and the first intraday
+single-option long/flat backtest are implemented. Options use explicit synthetic
+next-open fills on TRADES/MIDPOINT, resolved multipliers and per-contract costs.
+Both example strategies ran offline on saved 78-bar AAPL option datasets.
+
+Historical acquisition supports all four TRADES/MIDPOINT/BID/ASK sources and was
+verified after hours against TWS, including cache reuse. Current validation:
+336 tests, typing/style checks and a clean SDK-free wheel smoke check pass. The
+previous chart browser regression passed; this slice changes no chart code.
+Live recording, bulk collection and external providers are not required. The
+obsolete recording/rotation/replay stack and recorded-quote simulator were removed.
 
 ## Goal and scope
 
@@ -45,7 +47,7 @@ bounded to a selected contract and requested range, with optional cache/save for
 repeatability. The recorded-quote experiment was removed; the primary product
 data model uses on-demand IBKR historical inputs.
 
-## Option history delivered; next — historical-bar backtesting
+## Option history and first backtest delivered; next — research reports
 
 - [x] Resolve one explicit unexpired option selector and retain exact identity/multiplier
 - [x] Add intraday historical requests with fixed start/end bounds and explicit TRADES/MIDPOINT/BID/ASK types
@@ -54,7 +56,7 @@ data model uses on-demand IBKR historical inputs.
 - [x] Surface expired/unavailable history and permission failures explicitly; no fallback to live recording or fabricated data
 - [x] Verify a small recent historical request against TWS, including when the exchange is closed
 - [x] Provide an offline research example from the returned historical input
-- [ ] Add a historical-bar option backtest with explicit timing/cost assumptions appropriate to the input bars
+- [x] Add a historical-bar option backtest with explicit timing/cost assumptions appropriate to the input bars
 - [ ] Expand research/performance analytics and a reproducible research-to-backtest report
 
 Acceptance: request a selected option's available intraday history from IBKR on
@@ -63,7 +65,9 @@ ongoing broker connection. The API does not promise expired options, option EOD
 history, historical chain reconstruction or historical contract Greeks. Preserve
 TRADES/MIDPOINT/BID/ASK semantics; do not treat BID_ASK aggregates as an atomic quote.
 The previous recorded-quote simulator was removed; the historical-bar option engine
-will be implemented separately from equity simulation.
+is implemented separately from equity simulation. The initial model uses TRADES or
+MIDPOINT with explicit synthetic next-open fills; BID/ASK execution and expiry-day
+lifecycle handling remain unsupported.
 
 ## Python research data workflow
 
@@ -93,7 +97,7 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 
 Equity backtesting remains implemented and verified. The recorded-quote options
 experiment was removed during scope cleanup; historical option acquisition is implemented;
-historical-bar option simulation is next. Keep paper execution separate.
+a first historical-bar option simulation is also implemented. Keep paper execution separate.
 
 ## Stock/option quote foundation
 

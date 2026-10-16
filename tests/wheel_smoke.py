@@ -21,6 +21,7 @@ from pyibquant import (
 )
 from pyibquant.backtest import backtest_equity
 from pyibquant.data.history import normalize_range
+from pyibquant.option_backtest import backtest_option
 from pyibquant.quotes import QuoteInstrument, _QuoteState
 from pyibquant.research import simple_returns, sma
 
@@ -77,6 +78,21 @@ with TemporaryDirectory() as directory:
     result = backtest_equity(BarDataset.from_series(bars), [True, False],
                              finalized_through=date(2026, 1, 2))
     assert result.metrics()['ending_shares'] == 1
+    option_bars = BarSeries('DEMO', '5min')
+    option_bars.asset_type, option_bars.currency = 'option', 'USD'
+    option_bars.instrument_id, option_bars.multiplier, option_bars.data_type = 456, 150, 'MIDPOINT'
+    option_bars.option_metadata = dict(expiry='20261120', strike=100, right='C')
+    option_bars.requested_start = datetime(2026, 10, 16, 13, 30, tzinfo=UTC)
+    option_bars.requested_end = datetime(2026, 10, 16, 14, tzinfo=UTC)
+    option_bars.download_complete = True
+    option_bars.update(Bar(datetime(2026, 10, 16, 13, 30, tzinfo=UTC), 10, 11, 10, 11, None))
+    option_bars.update(Bar(datetime(2026, 10, 16, 13, 35, tzinfo=UTC), 12, 13, 12, 13, None))
+    frozen_option = BarDataset.from_series(option_bars)
+    loaded_option = BarDataset.load(frozen_option.save(Path(directory)/'option.json'))
+    assert loaded_option.fingerprint() == frozen_option.fingerprint()
+    option_result = backtest_option(loaded_option, [True, False], fill_model='next_bar_open',
+                                    finalized_through=option_bars.requested_end)
+    assert option_result.metrics()['unrealized_net_pnl'] == 150
     try:
         bars.to_dataframe()
     except ImportError as exc:
