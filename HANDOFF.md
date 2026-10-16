@@ -3,7 +3,7 @@
 Checkpoint: 2026-10-16. This document records the chart-foundations implementation
 and local validation. Snapshot commit e42aede records the session/recovery/research
 and frozen-dataset foundations. Commit 95fbdaf records the daily equity backtest.
-The quote snapshot follow-up is recorded below; no push or release was performed. Start with `git status` and `git log -1` after transferring work.
+The quote follow-ups are recorded below; no push or release was performed. Start with `git status` and `git log -1` after transferring work.
 
 ## Where to resume
 
@@ -20,9 +20,11 @@ backtesting and algorithmic trading. Bar exports and optional session enrichment
 are now implemented. Fixed historical ranges, basic dataset metadata, simple
 returns/SMA and a research example have since been added with offline and live TWS
 verification. Frozen dataset reload and explicit calendar/finality comparisons are
-also implemented. The first daily equity backtest now works offline. Next:
-in-session live option verification, discovery and selected quote collection.
-Frozen AAPL option bid/ask and model IV/Greeks now pass against TWS.
+also implemented. The first daily equity backtest now works offline. Grouped
+option discovery, independent quote streams and sampled recording/offline replay
+are now implemented. Frozen AAPL integration checks pass. Next: choose the first
+options-backtest historical input source, then implement its replay/execution
+model. In-session live option verification remains pending.
 Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
@@ -231,7 +233,7 @@ lock. Disconnects fail rather than silently reissue snapshots.
 
 `Option(symbol, expiry_date, strike, "C"/"P", trading_class="", multiplier=None)`
 resolves exactly one contract via SMART/USD. No multiplier is assumed. There is
-no chain discovery or future/index-option coverage. `examples/quote_snapshot.py`
+no future/index-option coverage; grouped discovery is now implemented below. `examples/quote_snapshot.py`
 prints or saves JSON after disconnecting; `tests/live_quotes_check.py` checks the
 real data-only callback path. Stock verification passed. The user selected SPY,
 2026-11-20, 770, C. Contract resolution passed: conId 882135148, trading class
@@ -246,8 +248,57 @@ sizes 891/125 and model IV/delta/gamma/vega/theta. Reported feed type was frozen
 In-session live option BBO/Greeks remain unverified; the SPY permission message
 is not evidence that the AAPL snapshot needs a new subscription. Do not buy
 subscriptions, change account settings or relabel frozen quotes as live.
-Continuous subscriptions, chart bid/ask display, recording and historical option
-imports remain planned. See README for exact limits and IBKR source links.
+Continuous subscriptions, grouped discovery and sampled recording/replay now work
+as described below. Chart bid/ask display and historical option imports remain
+planned. See README for exact limits and IBKR source links.
+
+## Option discovery, streaming and sampled recordings (2026-10-16)
+
+`Market.option_chain(symbol)` resolves a US stock/ETF and uses reqSecDefOptParams,
+not a broad incomplete-option reqContractDetails query. Results retain exchange,
+trading class and multiplier groups with sorted/deduplicated expiry/strike sets.
+`chain.select(expiry, strike, right, trading_class=..., multiplier=...)` selects
+one SMART candidate group; it does not certify the expiry/strike/right combination.
+Quote APIs resolve that candidate exactly. Discovery never subscribes to all options.
+
+`Market.stream_quote()` uses snapshot=False, regulatorySnapshot=False. The returned
+QuoteStream owns one provider-generation request. `latest()` copies immutable
+fields/status/feed provenance; wait_for_update(after_sequence, timeout=...) lets
+independent consumers keep cursors without stealing updates. Intermediate
+callbacks can coalesce; this is not a tick queue. Quote observations now include
+streaming, sequence, observed_at, status and error. Active means callbacks arrived,
+not that fields are complete/tradable. Closing cancels only that request; chart
+bar cancellation does not own it. Market.close closes all of its subscriptions.
+
+All active streams on a connection must request the same feed mode; mismatched
+snapshot/stream modes fail before changing the global requested type. Separate
+connections can use different modes. Terminal permissions/disconnects wake waiters
+and retain their first terminal cause through later cleanup. There is no automatic
+quote reconnect: old handles stay terminal while bar recovery can reconnect.
+
+`record_quotes(stream, path, duration=..., interval=...)` samples on the calling
+thread, including unchanged accumulated observations and their original receipt
+times. Files are exclusive unless overwrite=True. JSONL header/samples/end footer
+preserve contract identity, requested/reported mode, sampling cadence, status,
+counts and SHA-256 integrity. complete means the recorder timer finished, not
+market coverage, field availability, freshness or executable BBO. These are sampled
+local observations, not an exchange tick archive. File IO/user code never runs on
+the IBKR reader thread. The caller still owns and closes the stream.
+
+`QuoteRecording.load()` requires no SDK/pandas/PyArrow. `.samples()` returns copied
+JSON records. `.quality()` reports availability, crossed/delayed/frozen/unknown
+samples, model IV/delta and distinct observed versions; exchange quote age and
+execution suitability remain unverified. Missing footer, terminal streams and
+truncated trailing data require allow_incomplete=True; checksum failures always
+raise. Replay currently loads the recording in memory. Automatic resume, file
+rotation and a bounded-memory large-file reader remain planned.
+
+`examples/options_research.py` discovers alone or records one selected contract
+into a new timestamped directory with chain.json and quotes.jsonl. Data is ignored
+under charts/. The live check uses only the already selected AAPL 2026-11-20 340 C
+in explicit frozen mode and cancels it after six seconds. Next options-backtest
+input choice was requested: new collected recordings versus user-supplied
+historical data. Do not assume IBKR reconstructs expired-option quote histories.
 
 ## What exists
 
@@ -257,6 +308,11 @@ imports remain planned. See README for exact limits and IBKR source links.
 | `src/pyibquant/data/providers/ibkr.py` | Official SDK callbacks, contracts, requests, normalization, cancellation |
 | `src/pyibquant/data/cache.py` | Optional exact-query Parquet cache, expiry, inspection and clearing |
 | `src/pyibquant/bars.py` | Immutable Bar values and mutable thread-protected BarSeries snapshots |
+| `src/pyibquant/options.py` | Grouped option-chain metadata and explicit SMART candidate selection |
+| `src/pyibquant/quote_stream.py` | Subscription ownership and independent consumer update cursors |
+| `src/pyibquant/quote_recording.py` | Sampled JSONL recording, integrity/partial checks, quality reports and offline replay |
+| `examples/options_research.py` | Discovery and selected-contract recording workflow |
+| `tests/live_options_research_check.py` | Explicit TWS chain → stream → recording → offline replay integration check |
 | `src/pyibquant/quotes.py` | SDK-free option selectors, quote/Greek values and callback normalization |
 | `examples/quote_snapshot.py` | Stock/explicit-option snapshot inspection and JSON export |
 | `tests/test_quotes.py` | Quote SDK callback, entitlement, cleanup and control responsiveness tests |
@@ -417,6 +473,26 @@ python tests/browser_controls_check.py
 ```
 
 ## Validation recorded at this checkpoint
+
+Discovery/stream/recording follow-up (2026-10-16): 276 local tests, Ruff and
+mypy (21 source files) pass. The bare installed wheel passes its expanded smoke
+check without ibapi/pandas/PyArrow, including chain selection, streaming-model
+recording and offline replay. The installed-wheel subset without ibapi/pandas
+passes 126 tests and skips six pandas checks. TWS check passed with 41 AAPL
+chain groups. One selected AAPL 2026-11-20 340 C frozen stream recorded six seconds
+at half-second sampling: 12 samples, 10 with bid/ask and confirmed frozen mode,
+9 with model IV/delta, 2 initial unknown-feed samples, no crossed pairs. Only one
+quote subscription was created, no history requests were sent, cancellation
+released its request and the file reloaded after broker disconnect. The quality
+report preserves unknown exchange quote age and unverified execution suitability.
+Generated artifacts stay under ignored charts/options-research-check/.
+
+Tests cover chain grouping/ambiguity/candidate identity, malformed chain callbacks,
+stream cursors/ownership/mode isolation, snapshot coexistence, terminal wakeups and
+first-cause retention, initial send cleanup, sampled unchanged receipts, exclusive
+files, partial/truncated inputs, integrity/identity/count checks and both discovery/
+recording example paths. Quote reconnect, disk rotation and live-session options
+verification remain unverified/unimplemented as noted above.
 
 AAPL option follow-up (2026-10-16): 234 tests, Ruff and mypy pass. The real SDK
 normalizes unavailable option computations to None, which initially exposed an
@@ -596,8 +672,10 @@ counts and chart screenshots are local artifacts, not fixtures or release data.
   provider history limits can prevent recovery of very long gaps.
 - Exact-query cache only; no coverage merging, automatic pruning or disk-size limit.
 - Historical bars are US stock/ETF TRADES only, with no delayed-history fallback.
-- Quote snapshots support US stocks/explicit equity options and explicit feed modes;
-  continuous quotes, depth, chart bid/ask display and historical quote imports are not implemented.
+- US stock/ETF quote snapshots, selected streams and grouped option discovery are implemented.
+- Quote streams terminate on disconnect; no automatic quote recovery or file resume/rotation.
+- Sampled recordings are not tick archives; replay loads files in memory.
+- Depth, chart bid/ask display and historical option quote imports are not implemented.
 - IBKR limits/entitlements apply; fixed ranges page automatically, legacy lookbacks remain single requests.
 - Live bars remain in memory without a retention limit; full snapshots are polled/redrawn.
 - A selection temporarily creates the replacement subscription before releasing the old one.

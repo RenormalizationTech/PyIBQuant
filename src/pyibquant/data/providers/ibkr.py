@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ...bars import Bar, BarSeries
 from ...errors import CacheError, ConnectionError, DataError, HistoricalRangeError, RequestTimeout
+from ...options import OptionChain, OptionChainGroup
+from ...quote_stream import QuoteStream
 from ...quotes import DATA_TYPES, Option, Quote, QuoteInstrument, _number, _QuoteState
 from ..cache import HistoricalCache, Query
 from ..history import HistoryRange
@@ -104,6 +106,8 @@ class _Request:
     regular_hours: bool = True
     initialized: bool = False
     quote: _QuoteState | None = None
+    chain_underlying: int | None = None
+    chain_groups: dict[tuple[str, str, float], OptionChainGroup] = field(default_factory=dict)
 
 
 def normalize_bar(raw: Any, interval: str) -> Bar:
@@ -274,6 +278,59 @@ class IBKRProvider(EWrapper, EClient):
         finally:
             self._requests.pop(req_id, None)
 
+    def option_chain(self, symbol: str, *, primary_exchange: str = "") -> OptionChain:
+        """Fetch chain definitions, without enumerating or quoting every combination."""
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("Option-chain discovery requires a stock symbol")
+        contract = self._resolve(symbol.strip().upper(), primary_exchange)
+        if contract.secType != "STK" or contract.conId <= 0:
+            raise DataError("Option-chain discovery requires a resolved stock/ETF underlying")
+        req_id, request = self._new_request()
+        request.chain_underlying = contract.conId
+        try:
+            self.reqSecDefOptParams(req_id, contract.symbol, "", "STK", contract.conId)
+            self._wait(request)
+            return OptionChain(
+                contract.symbol, contract.conId, contract.currency,
+                tuple(request.chain_groups[key] for key in sorted(request.chain_groups)),
+                datetime.now(UTC),
+            )
+        finally:
+            self._requests.pop(req_id, None)
+
+    def securityDefinitionOptionParameter(
+        self, reqId: int, exchange: str, underlyingConId: int, tradingClass: str,
+        multiplier: str, expirations: set[str], strikes: set[float],
+    ) -> None:
+        request = self._requests.get(reqId)
+        if request is None or request.chain_underlying is None or request.done.is_set():
+            return
+        try:
+            multiple = _number(multiplier, allow_zero=False)
+            if underlyingConId != request.chain_underlying or multiple is None:
+                raise ValueError("Unexpected underlying or invalid contract multiplier")
+            dates = {datetime.strptime(value, "%Y%m%d").date() for value in expirations}
+            prices = {_number(value, allow_zero=False) for value in strikes}
+            if None in prices or not exchange or not tradingClass:
+                raise ValueError("Invalid exchange, trading class or strikes")
+            key = (exchange, tradingClass, multiple)
+            previous = request.chain_groups.get(key)
+            if previous is not None:
+                dates.update(previous.expirations)
+                prices.update(previous.strikes)
+            request.chain_groups[key] = OptionChainGroup(
+                exchange, tradingClass, multiple, tuple(sorted(dates)),
+                tuple(sorted(value for value in prices if value is not None)),
+            )
+        except (ValueError, TypeError, OverflowError) as exc:
+            request.error = DataError(f"Invalid IBKR option-chain response: {exc}")
+            request.done.set()
+
+    def securityDefinitionOptionParameterEnd(self, reqId: int) -> None:
+        request = self._requests.get(reqId)
+        if request is not None and request.chain_underlying is not None:
+            request.done.set()
+
     def _resolve_option(self, option: Option) -> Any:
         contract = Contract()
         contract.symbol, contract.secType = option.symbol, "OPT"
@@ -295,6 +352,41 @@ class IBKRProvider(EWrapper, EClient):
         finally:
             self._requests.pop(req_id, None)
 
+    @staticmethod
+    def _quote_instrument(contract: Any, option: bool) -> QuoteInstrument:
+        if contract.secType != ("OPT" if option else "STK") or contract.conId <= 0:
+            raise DataError("IBKR returned an unexpected or unresolved quote contract")
+        return QuoteInstrument(
+            contract.symbol, contract.conId, "option" if option else "equity",
+            contract.currency, contract.exchange, contract.primaryExchange,
+            contract.localSymbol, contract.tradingClass,
+            _number(contract.multiplier, allow_zero=False) if option else 1.0,
+            contract.lastTradeDateOrContractMonth if option else None,
+            float(contract.strike) if option else None, contract.right if option else None,
+        )
+
+    def _quote_contract(self, symbol: str | Option, primary_exchange: str) -> Any:
+        if not isinstance(symbol, (str, Option)) or isinstance(symbol, str) and not symbol.strip():
+            raise ValueError("Quote requires a stock symbol or explicit Option selector")
+        if isinstance(symbol, Option):
+            if primary_exchange:
+                raise ValueError("Option selectors use trading_class/multiplier, "
+                                 "not primary_exchange")
+            return self._resolve_option(symbol)
+        return self._resolve(symbol.strip().upper(), primary_exchange)
+
+    def _set_quote_mode(self, market_data_type: str) -> None:
+        # Caller owns _quote_lock. Active streams prevent connection-wide mode
+        # changes; use separate Market connections for simultaneous different modes.
+        active = {request.quote.requested_type for request in list(self._requests.values())
+                  if request.quote is not None and request.quote.streaming
+                  and request.quote.completed_at is None}
+        if active and active != {market_data_type}:
+            raise DataError("Active quote streams use another market_data_type. "
+                            "Close them or use a separate Market connection.")
+        if not active:
+            self.reqMarketDataType(DATA_TYPES[market_data_type])
+
     def quote(
         self, symbol: str | Option, *, primary_exchange: str = "",
         market_data_type: str = "live",
@@ -302,32 +394,13 @@ class IBKRProvider(EWrapper, EClient):
         """Collect one standard Level-one snapshot; never request a regulatory snapshot."""
         if market_data_type not in DATA_TYPES:
             raise ValueError(f"market_data_type must be one of {', '.join(DATA_TYPES)}")
-        if not isinstance(symbol, (str, Option)) or isinstance(symbol, str) and not symbol.strip():
-            raise ValueError("Quote requires a stock symbol or explicit Option selector")
-        if isinstance(symbol, Option) and primary_exchange:
-            raise ValueError("Option selectors use trading_class/multiplier, not primary_exchange")
-        # reqMarketDataType is connection-wide. Serialize snapshot lifetimes so
-        # concurrent callers cannot change another snapshot's requested mode.
         with self._quote_lock:
-            option = isinstance(symbol, Option)
-            if isinstance(symbol, Option):
-                contract = self._resolve_option(symbol)
-            else:
-                contract = self._resolve(symbol.strip().upper(), primary_exchange)
-            if contract.secType != ("OPT" if option else "STK") or contract.conId <= 0:
-                raise DataError("IBKR returned an unexpected or unresolved quote contract")
-            instrument = QuoteInstrument(
-                contract.symbol, contract.conId, "option" if option else "equity",
-                contract.currency, contract.exchange, contract.primaryExchange,
-                contract.localSymbol, contract.tradingClass,
-                _number(contract.multiplier, allow_zero=False) if option else 1.0,
-                contract.lastTradeDateOrContractMonth if option else None,
-                float(contract.strike) if option else None, contract.right if option else None,
-            )
+            contract = self._quote_contract(symbol, primary_exchange)
+            instrument = self._quote_instrument(contract, isinstance(symbol, Option))
+            self._set_quote_mode(market_data_type)
             req_id, request = self._new_request()
             request.quote = _QuoteState(instrument, market_data_type)
             try:
-                self.reqMarketDataType(DATA_TYPES[market_data_type])
                 self.reqMktData(req_id, contract, "", True, False, [])
                 self._wait(request)
                 return request.quote.snapshot()
@@ -335,6 +408,39 @@ class IBKRProvider(EWrapper, EClient):
                 self._requests.pop(req_id, None)
                 if request.quote.completed_at is None and self.isConnected():
                     self.cancelMktData(req_id)
+
+    def stream_quote(
+        self, symbol: str | Option, *, primary_exchange: str = "",
+        market_data_type: str = "live",
+    ) -> QuoteStream:
+        """Subscribe without waiting for prices; errors/status arrive on the handle."""
+        if market_data_type not in DATA_TYPES:
+            raise ValueError(f"market_data_type must be one of {', '.join(DATA_TYPES)}")
+        with self._quote_lock:
+            contract = self._quote_contract(symbol, primary_exchange)
+            instrument = self._quote_instrument(contract, isinstance(symbol, Option))
+            self._set_quote_mode(market_data_type)
+            req_id, request = self._new_request()
+            request.quote = _QuoteState(instrument, market_data_type, streaming=True)
+            stream = QuoteStream(request.quote, lambda: self._cancel_quote(req_id))
+            try:
+                self.reqMktData(req_id, contract, "", False, False, [])
+                if request.error:
+                    raise request.error
+                return stream
+            except Exception:
+                self._cancel_quote(req_id)
+                raise
+
+    def _cancel_quote(self, req_id: int) -> None:
+        request = self._requests.pop(req_id, None)
+        if request is not None and request.quote is not None:
+            try:
+                if self.isConnected():
+                    self.cancelMktData(req_id)
+            finally:
+                request.quote.finish("closed")
+                request.done.set()
 
     def tickPrice(self, reqId: int, tickType: int, price: float, attrib: Any) -> None:
         request = self._requests.get(reqId)
@@ -362,6 +468,7 @@ class IBKRProvider(EWrapper, EClient):
                     state.delayed = False
                     state.warnings.append("Market data type changed; earlier fields discarded.")
                 state.actual_type = actual
+                state.notify()
 
     def tickOptionComputation(
         self, reqId: int, tickType: int, tickAttrib: int, impliedVol: float | None,
@@ -375,10 +482,11 @@ class IBKRProvider(EWrapper, EClient):
 
     def tickSnapshotEnd(self, reqId: int) -> None:
         request = self._requests.get(reqId)
-        if request is not None and request.quote is not None:
+        if request is not None and request.quote is not None and not request.quote.streaming:
             with request.quote.lock:
                 if request.quote.completed_at is None:
                     request.quote.completed_at = datetime.now(UTC)
+                    request.quote.notify()
                 request.done.set()
 
     def bars(
@@ -827,6 +935,7 @@ class IBKRProvider(EWrapper, EClient):
         if request.quote is not None and errorCode in {10090, 10091, 10167}:
             with request.quote.lock:
                 request.quote.warnings.append(message)
+                request.quote.notify()
             return
         if errorCode in {2174, 2176, 2188, 10167}:
             if request.series is not None:
@@ -834,8 +943,11 @@ class IBKRProvider(EWrapper, EClient):
             if request.quote is not None:
                 with request.quote.lock:
                     request.quote.warnings.append(message)
+                    request.quote.notify()
             return
         request.error = DataError(message)
+        if request.quote is not None and request.quote.streaming:
+            request.quote.finish("failed", message)
         if request.series is not None:
             request.series.error = message
             request.series.status = "Data request failed"
@@ -845,6 +957,8 @@ class IBKRProvider(EWrapper, EClient):
         with self._request_lock:
             for request in list(self._requests.values()):
                 request.error = error
+                if request.quote is not None and request.quote.streaming:
+                    request.quote.finish("closed" if self._closing else "disconnected", str(error))
                 if request.series is not None:
                     request.series.error = str(error)
                     request.series.status = "Disconnected"
@@ -872,7 +986,8 @@ class IBKRProvider(EWrapper, EClient):
         for req_id, request in list(self._requests.items()):
             if request.series is not None and request.series.live and self.isConnected():
                 self.cancelHistoricalData(req_id)
-            if (request.quote is not None and request.quote.completed_at is None
+            if (request.quote is not None
+                    and (request.quote.streaming or request.quote.completed_at is None)
                     and self.isConnected()):
                 self.cancelMktData(req_id)
         self.disconnect()

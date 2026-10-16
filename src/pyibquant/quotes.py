@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from math import isfinite
-from threading import RLock
+from threading import Condition, RLock
 from typing import Any
 
 DATA_TYPES = {'live': 1, 'frozen': 2, 'delayed': 3, 'delayed_frozen': 4}
@@ -78,7 +78,7 @@ class OptionGreeks:
 
 @dataclass(frozen=True)
 class Quote:
-    """Available fields from one reqMktData snapshot; absence is represented by None.
+    """Available snapshot/stream fields from reqMktData; absence is represented by None.
 
     Callback receipt times are local UTC times, not exchange timestamps or proof
     of a fresh/tradable quote. Bid/ask fields arrive independently. Level one is
@@ -90,7 +90,7 @@ class Quote:
     market_data_type: str | None
     delayed_ticks: bool
     requested_at: datetime
-    completed_at: datetime
+    completed_at: datetime | None
     bid: float | None
     ask: float | None
     last: float | None
@@ -101,6 +101,11 @@ class Quote:
     field_tick_types: tuple[tuple[str, int], ...]
     greeks: tuple[OptionGreeks, ...]
     warnings: tuple[str, ...]
+    streaming: bool = False
+    sequence: int = 0
+    observed_at: datetime | None = None
+    status: str = 'completed'
+    error: str | None = None
 
     @property
     def crossed(self) -> bool:
@@ -124,7 +129,8 @@ class Quote:
         result = asdict(self)
         result['field_received_at'] = dict(self.field_received_at)
         result['field_tick_types'] = dict(self.field_tick_types)
-        result.update(provider='IBKR', source='reqMktData', snapshot_complete=True,
+        result.update(provider='IBKR', source='reqMktData',
+                      snapshot_complete=not self.streaming and self.completed_at is not None,
                       timestamp_semantics='local_callback_receipt_not_exchange_time',
                       spread=self.spread, midpoint=self.midpoint, crossed=self.crossed,
                       is_delayed=self.is_delayed)
@@ -160,6 +166,28 @@ class _QuoteState:
     greeks: dict[str, OptionGreeks] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     lock: Any = field(default_factory=RLock)
+    streaming: bool = False
+    sequence: int = 0
+    status: str = 'collecting'
+    error: str | None = None
+    changed: Any = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.changed = Condition(self.lock)
+
+    def notify(self) -> None:
+        """Publish while holding lock; each consumer keeps its own sequence cursor."""
+        self.sequence += 1
+        self.changed.notify_all()
+
+    def finish(self, status: str, error: str | None = None) -> None:
+        with self.lock:
+            if self.completed_at is not None:
+                return
+            self.completed_at = self.completed_at or datetime.now(UTC)
+            self.status = status
+            self.error = error if error is not None else self.error
+            self.notify()
 
     def tick(self, tick_type: int, value: Any, *, size: bool = False) -> None:
         mapping = {0: 'bid_size', 3: 'ask_size', 5: 'last_size',
@@ -175,6 +203,8 @@ class _QuoteState:
             self.receipts[name] = datetime.now(UTC)
             self.tick_types[name] = tick_type
             self.delayed |= tick_type >= 66
+            self.status = 'active'
+            self.notify()
 
     def computation(self, tick_type: int, values: tuple[float | None, ...]) -> None:
         source = {10: 'bid', 11: 'ask', 12: 'last', 13: 'model',
@@ -196,10 +226,12 @@ class _QuoteState:
                 _number(theta, minimum=-1e99) if theta != -2 else None,
                 _number(underlying, allow_zero=False),
             )
+            self.status = 'active'
+            self.notify()
 
     def snapshot(self) -> Quote:
         with self.lock:
-            assert self.completed_at is not None
+            assert self.streaming or self.completed_at is not None
             warnings = list(self.warnings)
             if self.values.get('bid') is None or self.values.get('ask') is None:
                 warnings.append('Snapshot has no complete bid/ask pair; '
@@ -226,4 +258,6 @@ class _QuoteState:
                 self.values.get('last_size'),
                 tuple(sorted(self.receipts.items())), tuple(sorted(self.tick_types.items())),
                 tuple(self.greeks[key] for key in sorted(self.greeks)), tuple(warnings),
+                streaming=self.streaming, sequence=self.sequence, observed_at=datetime.now(UTC),
+                status=self.status if self.streaming else 'completed', error=self.error,
             )

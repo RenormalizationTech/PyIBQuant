@@ -2,15 +2,28 @@
 
 import importlib.util
 import sys
-from datetime import date
+from datetime import UTC, date, datetime
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pyibquant
-from pyibquant import Bar, BarDataset, BarSeries, HistoricalRangeError, Market, Option
+from pyibquant import (
+    Bar,
+    BarDataset,
+    BarSeries,
+    HistoricalRangeError,
+    Market,
+    Option,
+    OptionChain,
+    OptionChainGroup,
+    QuoteRecording,
+    QuoteStream,
+    record_quotes,
+)
 from pyibquant.backtest import backtest_equity
 from pyibquant.data.history import normalize_range
+from pyibquant.quotes import QuoteInstrument, _QuoteState
 from pyibquant.research import simple_returns, sma
 
 assert Path(pyibquant.__file__).is_relative_to(Path(sys.prefix)), pyibquant.__file__
@@ -36,6 +49,20 @@ assert bounds.contains(date(2026, 1, 1))
 assert HistoricalRangeError('failed', bars, remaining_start=bounds.start,
                             remaining_end=bounds.end).partial is bars
 with TemporaryDirectory() as directory:
+    chain = OptionChain('DEMO', 123, 'USD', (
+        OptionChainGroup('SMART', 'DEMO', 100, (date(2026, 11, 20),), (100,)),
+    ), datetime.now(UTC))
+    assert chain.select(date(2026, 11, 20), 100, 'C').trading_class == 'DEMO'
+    instrument = QuoteInstrument('DEMO', 123, 'equity', 'USD', 'SMART', '',
+                                 'DEMO', 'DEMO', 1, None, None, None)
+    state = _QuoteState(instrument, 'live', streaming=True)
+    with QuoteStream(state, lambda: state.finish('closed')) as stream:
+        state.tick(1, 100)
+        state.tick(2, 102)
+        recording = QuoteRecording.load(record_quotes(
+            stream, Path(directory) / 'quotes.jsonl', duration=.001,
+        ))
+        assert recording.complete and recording.quality()['with_bid_ask'] == 1
     html = bars.plot(Path(directory) / 'chart.html', open_browser=False).read_text()
     assert 'class MarketChart' in html
     assert 'function freshness' in html

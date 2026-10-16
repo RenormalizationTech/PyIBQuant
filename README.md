@@ -25,8 +25,9 @@ TWS. Frozen dataset save/reload and explicit calendar/finality audits also work
 without a broker. A first daily equity backtest now simulates next-open execution,
 costs and performance from these frozen inputs. Level-one quote snapshots support
 stocks and explicit option selectors, with live stock and frozen option snapshots
-verified against TWS. Next: in-session live option verification, contract discovery
-and selected quote collection;
+verified against TWS. Grouped option discovery, independently owned quote streams
+and sampled recording/offline replay are also implemented. Next: choose inputs
+for the first options backtest and verify live options during trading hours;
 user-controlled paper trading remains on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
 the project owner's primary personal interest. A focused options research pilot
@@ -402,11 +403,103 @@ python tests/live_quotes_check.py --symbol AAPL
 ```
 
 Pass `--expiry YYYY-MM-DD --strike NUMBER --right C` (or P) to inspect an explicit
-option. Continuous quote subscriptions, chain discovery, chart bid/ask display,
-quote recording and historical quote imports remain future work. Snapshot calls
+option. Discovery, streaming and sampled recording are described below. Chart
+bid/ask display and historical quote imports remain future work. Snapshot calls
 serialize on a connection because IBKR's requested feed type is connection-wide;
 they do not hold the Market control lock while waiting. Disconnects fail the
 snapshot instead of silently repeating it. Historical bar recovery is unchanged.
+
+### Option discovery, streaming and sampled research recordings
+
+```python
+from datetime import date
+from pyibquant import Market, QuoteRecording, record_quotes
+
+with Market.ibkr(timeout=30) as market:
+    chain = market.option_chain("AAPL")
+    for group in chain.groups:
+        print(group.exchange, group.trading_class, group.multiplier,
+              group.expirations, group.strikes)
+    option = chain.select(date(2026, 11, 20), 340, "C",
+                          trading_class="AAPL", multiplier=100)
+    # Frozen is explicit for this overnight example. Select live for live research.
+    with market.stream_quote(option, market_data_type="frozen") as stream:
+        path = record_quotes(stream, "charts/quotes/aapl-samples.jsonl",
+                             duration=10, interval=1)
+
+# Replay without TWS, ibapi, pandas or PyArrow.
+recording = QuoteRecording.load(path)
+print(recording.quality())
+for sample in recording.samples():
+    print(sample["sampled_at"], sample["quote"]["bid"], sample["quote"]["ask"])
+```
+
+`option_chain()` resolves the US stock/ETF underlying, then requests definitions
+with `reqSecDefOptParams`. It keeps exchange/trading-class/multiplier partitions
+separate, with sorted expiry and strike sets. It does not request quotes or build
+an exhaustive Cartesian product. `chain.select()` creates a candidate from exactly
+one matching SMART group. A listed expiry and strike do **not** prove their
+combination exists; quote/stream requests resolve the selected contract before
+subscribing. Ambiguous groups require explicit trading class/multiplier. See
+IBKR's [chain definition caveat](https://interactivebrokers.github.io/tws-api/options.html).
+
+`stream_quote()` uses `reqMktData(snapshot=False, regulatorySnapshot=False)` and
+returns before fields are available. Each handle owns its subscription; closing
+it cancels only that request, and chart selection/cancellation does not own it.
+The Market context closes all its remaining subscriptions. `stream.latest()`
+returns an immutable accumulated observation with `streaming=True`, `sequence`,
+`observed_at`, status and error. `active` means callbacks have arrived, not that a
+complete, live or tradable bid/ask exists. Check fields and reported feed type.
+
+While the stream context is open, independent consumers can wait using their own cursors:
+
+```python
+observation = stream.latest()
+newer = stream.wait_for_update(observation.sequence, timeout=5)
+if newer.sequence > observation.sequence:
+    print(newer.status, newer.bid, newer.ask)
+```
+
+Timeout returns the current observation, possibly with the same sequence.
+Intermediate callbacks can coalesce; this API is not a tick-by-tick queue.
+Closing, terminal permission errors and disconnects wake waiters. The first
+terminal cause is retained; disconnected handles do not resume automatically.
+Open a new stream explicitly and keep recording gaps visible. Automatic historical
+bar recovery does not restore quote streams. Active streams on one connection
+must request the same feed mode; conflicting snapshot/stream modes fail before
+changing it. Use separate Market connections for simultaneous different modes.
+
+`record_quotes()` samples on the calling thread, keeping file IO outside IBKR's
+callback thread. It records unchanged observations too, retaining their original
+field receipt times. Files are exclusive by default; `overwrite=True` is explicit.
+The versioned JSONL contains contract/feed/sampling metadata, observations and a
+footer with sample count, completion status and SHA-256 integrity check. This is
+a collection of sampled local observations, **not a complete exchange tick archive**.
+`complete` means the recording timer finished, not that all fields were available,
+all ticks were captured, or prices were fresh/executable. Local sample, observation
+and callback receipt times do not establish exchange quote age.
+
+Interrupted/failed/closed streams and missing footers require
+`QuoteRecording.load(path, allow_incomplete=True)` for inspection. A final truncated
+line may be recovered in that mode; checksum failures are always rejected. Replay
+returns independent JSON records. `quality()` reports bid/ask availability, crossed
+pairs, delayed/frozen/unknown feed counts and model IV/delta availability without
+certifying execution prices. It loads a recording in memory; disk rotation,
+automatic resume and a large-file streaming reader remain future work.
+
+The runnable example discovers a chain alone, or records one selected contract:
+
+```sh
+python examples/options_research.py AAPL
+python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --trading-class AAPL --multiplier 100 --market-data-type frozen --duration 10
+```
+
+Each run creates a timestamped directory under ignored `charts/options-research/`.
+`python tests/live_options_research_check.py` verified 41 AAPL chain groups and a
+six-second recording of the selected call: 12 samples, 10 with bid/ask and 9 with
+model IV/delta, with confirmed frozen feed labels. In-session live option
+verification, historical option imports and options execution/backtesting remain
+separate work. Frozen samples are not historical live trading observations.
 
 ### HTML snapshot
 

@@ -13,6 +13,8 @@ from .bars import BarSeries
 from .data.cache import HistoricalCache
 from .data.history import HistoryBoundary, normalize_range
 from .errors import PyIBQuantError
+from .options import OptionChain
+from .quote_stream import QuoteStream
 from .quotes import Option, Quote
 
 if TYPE_CHECKING:
@@ -57,6 +59,27 @@ class Market:
             )
             market._recovery_thread.start()
         return market
+
+    def option_chain(self, symbol: str, *, primary_exchange: str = "") -> OptionChain:
+        """Discover option expiry/strike partitions; select candidates before quoting."""
+        with self._operation_lock:
+            provider = self._provider
+        return provider.option_chain(symbol, primary_exchange=primary_exchange)
+
+    def stream_quote(
+        self, symbol: str | Option, *, primary_exchange: str = "",
+        market_data_type: str = "live",
+    ) -> QuoteStream:
+        """Own a continuous Level-one subscription independent of chart selection.
+
+        Close the handle explicitly. A disconnect ends it; automatic bar recovery
+        does not restore quotes. Active streams on one connection must request
+        the same feed mode. Use separate connections for different modes.
+        """
+        with self._operation_lock:
+            provider = self._provider
+        return provider.stream_quote(symbol, primary_exchange=primary_exchange,
+                                     market_data_type=market_data_type)
 
     def quote(
         self, symbol: str | Option, *, primary_exchange: str = "",

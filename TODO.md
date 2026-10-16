@@ -35,8 +35,8 @@ for later research. Historical option dataset imports and explicit spread/fill
 models follow; full options backtesting also needs expiry/exercise/assignment
 semantics. Do not assume IBKR can reconstruct expired option histories, or that
 recorded sampled quotes form a complete exchange tick archive. Explicit option
-quote snapshots now have offline verification; chain discovery, recording and
-options backtesting remain plans.
+snapshots, grouped discovery, continuous selected-contract subscriptions and
+sampled recording/replay are implemented. Options backtesting remains planned.
 
 ## Python research data workflow
 
@@ -64,8 +64,9 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Optional entry/exit and performance visualizations
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
-Next: verify live options during their trading session, then
-add discovery and selected quote collection for the options research pilot. Keep
+Next: choose the historical input source for the first options backtest and
+verify live options during their trading session. Discovery and sampled quote
+collection are implemented and verified with frozen AAPL option data. Keep
 paper execution separate; the simulator does not submit orders or model account
 settlement, dividends, taxes, liquidity or historical nominal-share execution.
 
@@ -83,14 +84,20 @@ settlement, dividends, taxes, liquidity or historical nominal-share execution.
 - [x] Handle SDK-normalized None Greeks and UNSET_DECIMAL sizes
 - [ ] In-session live option quote/Greeks verification (overnight live request had no prices)
 - [ ] Optional SPY retry after resolving its 10091 SPY ARCA/TOP/ALL permission message
-- [ ] Option-chain discovery and selected contract quote collection
-- [ ] Continuous quote subscriptions and chart bid/ask display
+- [x] Grouped option-chain discovery with explicit, unverified candidate selection
+- [x] Independently owned continuous stock/option quote subscriptions and consumer cursors
+- [x] Sampled JSONL recording, integrity checks, partial-status handling and SDK-free replay
+- [x] Frozen AAPL discovery → selected stream → recording → offline replay verified via TWS
+- [ ] Choose first options-backtest inputs: newly collected recordings or supplied historical data
+- [ ] Quote reconnect with explicit generation/gap recording; file rotation/large-file replay
+- [ ] Chart bid/ask display
 - [ ] Historical quote imports and options-specific spread/fill/expiry semantics
 
 ## Execution architecture prerequisites
 
-- [ ] Independent subscription ownership for chart and strategy consumers
-- [ ] Strategy data events independent of browser polling and countdowns
+- [x] Quote subscriptions have independent ownership and per-consumer update cursors
+- [ ] Independent bar subscription ownership for chart and strategy consumers
+- [ ] Completed-bar strategy events independent of browser polling and countdowns
 - [x] Fixed-range downloads release the Market control lock; subscription cancellation stays responsive
 - [ ] Extend this separation to future broker order/cancel controls and legacy lookback/history operations
 - [ ] Separate broker order/fill/position state and reconciliation from data recovery

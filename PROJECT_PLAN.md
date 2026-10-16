@@ -34,7 +34,10 @@ daily equity backtest now handles prior-close targets, next-open fills, fixed
 whole-share sizing, configurable costs and performance accounting. Next prioritize
 the options pilot: stock/explicit-option Level-one snapshots now work, with stock
 feed verification and frozen AAPL option bid/ask/model IV/Greeks verified against
-TWS. In-session live option verification, discovery and recording come next.
+TWS. Grouped option discovery, independently owned quote streams and sampled
+recording/offline replay are now implemented and verified with frozen AAPL data.
+Next choose the historical inputs for the first options backtest; in-session live
+option verification remains pending.
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
@@ -1203,8 +1206,8 @@ moving-average distance
 - [ ] expiration filtering
 - [ ] strike filtering
 - [ ] moneyness calculations
-- [ ] option quotes
-- [ ] option-chain snapshots
+- [x] Initial US equity/ETF option snapshots and selected-contract quote streams
+- [ ] Full option-chain quote snapshots beyond selected-contract acquisition
 - [ ] implied volatility representation
 - [ ] Greeks representation
 
@@ -1481,8 +1484,29 @@ and model IV/Greeks with confirmed frozen feed type. The overnight live request
 returned no prices; an in-session live check remains pending. SDK-normalized None
 Greeks and unset Decimal sizes are now handled without disconnecting or inventing
 large sizes. No subscription or account settings were changed.
-This is snapshot acquisition, not continuous streaming, chain discovery,
-historical quotes, chart bid/ask enrichment or a complete options backtest engine.
+The following foundation is now also implemented:
+
+- `Market.option_chain()` uses reqSecDefOptParams and preserves exchange, trading
+  class and multiplier partitions. Expiry/strike sets describe candidates, not
+  guaranteed combinations; selected options still resolve exactly before quoting.
+- `Market.stream_quote()` provides independent subscription handles, immutable
+  observations and per-consumer sequence cursors. No browser polling or user/file
+  callback runs on the IBKR reader thread. Mixed requested feed modes on a single
+  active connection are rejected. Disconnects terminate handles explicitly;
+  automatic quote restoration is not implemented.
+- `record_quotes()` samples on the caller's thread, preserves field receipt times
+  and records unchanged observations. Versioned JSONL includes identity, sampling
+  and feed provenance, a completion/error footer and integrity digest.
+  `QuoteRecording.load()` replays without SDK/optional dependencies; incomplete
+  input requires opt-in and checksum failures are rejected. Quality reports do
+  not certify executable quotes or exchange quote age.
+
+AAPL verification returned 41 chain groups and recorded 12 frozen observations,
+10 with bid/ask and 9 with model IV/delta. This verifies acquisition/recording,
+not an exchange tick archive or live trading-session coverage. Automatic quote
+reconnect, chart bid/ask enrichment, historical imports and the options backtest
+engine remain planned. The first backtest input-source decision is pending:
+collect recordings going forward or import a historical dataset supplied by the user.
 
 
 Options trading/backtesting is an explicit product priority. After the shared
