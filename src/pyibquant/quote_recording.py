@@ -27,6 +27,60 @@ def _aware(value: str) -> datetime:
     return result.astimezone(UTC)
 
 
+def _validate_continuity(quote: dict[str, Any], previous: dict[str, Any] | None) -> None:
+    """Reject erased/revised gaps, generation rollback and pre-gap carried fields."""
+    generation, gaps = quote['generation'], quote['gaps']
+    if type(generation) is not int or generation < 0 or not isinstance(gaps, list):
+        raise ValueError('Invalid quote generation/gaps')
+    observed = _aware(quote['observed_at'])
+    expected_generation = 0
+    last_end: datetime | None = None
+    for index, gap in enumerate(gaps):
+        started = _aware(gap['started_at'])
+        ended = _aware(gap['ended_at']) if gap['ended_at'] is not None else None
+        if (type(gap['previous_generation']) is not int
+                or gap['previous_generation'] != expected_generation
+                or not isinstance(gap['reason'], str) or not gap['reason']
+                or started > observed or last_end is not None and started < last_end):
+            raise ValueError('Invalid quote gap history')
+        if ended is None:
+            if (index != len(gaps)-1 or gap['next_generation'] is not None
+                    or quote['status'] not in {'disconnected', 'closed', 'failed'}):
+                raise ValueError('Invalid open quote gap')
+        else:
+            if (ended < started or ended > observed
+                    or type(gap['next_generation']) is not int
+                    or gap['next_generation'] != expected_generation+1):
+                raise ValueError('Invalid quote gap boundary')
+            expected_generation += 1
+            last_end = ended
+    if generation != expected_generation:
+        raise ValueError('Quote generation does not match gap history')
+    if gaps:
+        if gaps[-1]['ended_at'] is None:
+            if (any(quote[name] is not None for name in
+                    ('bid', 'ask', 'last', 'bid_size', 'ask_size', 'last_size'))
+                    or quote['field_received_at'] or quote['field_tick_types'] or quote['greeks']
+                    or quote['market_data_type'] is not None or quote['delayed_ticks']):
+                raise ValueError('Disconnected quote retained pre-gap fields')
+        elif last_end is not None and (
+            any(_aware(stamp) < last_end for stamp in quote['field_received_at'].values())
+            or any(_aware(greek['received_at']) < last_end for greek in quote['greeks'])
+        ):
+            raise ValueError('Quote retained fields from an earlier generation')
+    if previous is not None:
+        old_gaps = previous.get('gaps', [])
+        if generation < previous.get('generation', 0) or len(gaps) < len(old_gaps):
+            raise ValueError('Quote continuity history moved backward')
+        for old, new in zip(old_gaps, gaps):
+            if old['ended_at'] is not None:
+                if old != new:
+                    raise ValueError('Previously recorded quote gap was revised')
+            elif any(old[key] != new[key] for key in
+                     ('started_at', 'reason', 'previous_generation')):
+                raise ValueError('Previously recorded quote gap was revised')
+
+
 def record_quotes(
     stream: QuoteStream, path: str | Path, *, duration: float,
     interval: float = 1, overwrite: bool = False,
@@ -58,7 +112,7 @@ def record_quotes(
             if hashed:
                 digest.update(line.encode('utf-8'))
 
-        write(dict(type='header', format='pyibquant.quote_samples', version=1,
+        write(dict(type='header', format='pyibquant.quote_samples', version=2,
                    started_at=datetime.now(UTC).isoformat(), duration=duration, interval=interval,
                    instrument=initial['instrument'],
                    requested_data_type=initial['requested_data_type'],
@@ -85,7 +139,11 @@ def record_quotes(
             if monotonic() >= deadline:
                 break
         final = stream.latest()
-        status = final.status if stream.closed else 'completed'
+        if final.gaps != quote.gaps or final.generation != quote.generation:
+            write(dict(type='sample', sampled_at=datetime.now(UTC).isoformat(),
+                       quote=final.to_dict()))
+            count += 1
+        status = final.status if stream.closed or final.status == 'disconnected' else 'completed'
         write(dict(type='end', status=status, samples=count,
                    finished_at=datetime.now(UTC).isoformat(), error=final.error,
                    sha256=digest.hexdigest()), hashed=False)
@@ -152,9 +210,11 @@ class QuoteRecording:
             frozen += kind in {'frozen', 'delayed_frozen'}
             model += any(greek['source'] == 'model' and greek['implied_volatility'] is not None
                          and greek['delta'] is not None for greek in quote['greeks'])
+        latest = json.loads(self._samples_json[-1])['quote'] if self._samples_json else {}
         return dict(samples=len(self), with_bid_ask=pairs, crossed_pairs=crossed,
                     delayed_samples=delayed, frozen_samples=frozen, feed_types=types,
                     with_model_iv_delta=model, distinct_observed_versions=len(versions),
+                    generation=latest.get('generation', 0), gaps=latest.get('gaps', []),
                     exchange_quote_age='unknown', executable_prices='not_verified')
 
     @classmethod
@@ -164,6 +224,7 @@ class QuoteRecording:
         samples: list[str] = []
         digest = hashlib.sha256()
         previous_sequence = -1
+        previous_quote: dict[str, Any] | None = None
         try:
             with Path(path).expanduser().open(encoding='utf-8', newline='') as file:
                 for line in file:
@@ -179,7 +240,8 @@ class QuoteRecording:
                     if header is None:
                         if (record['type'] != 'header'
                                 or record['format'] != 'pyibquant.quote_samples'
-                                or type(record['version']) is not int or record['version'] != 1):
+                                or type(record['version']) is not int
+                                or record['version'] not in {1, 2}):
                             raise ValueError('Unsupported quote recording format/version')
                         _aware(record['started_at'])
                         for name in ('duration', 'interval'):
@@ -204,6 +266,9 @@ class QuoteRecording:
                             raise ValueError('Recording sample identity/mode/sequence '
                                              'is inconsistent')
                         previous_sequence = sequence
+                        if header['version'] == 2 or 'generation' in quote or 'gaps' in quote:
+                            _validate_continuity(quote, previous_quote)
+                        previous_quote = quote
                         if (quote['status'] not in {'collecting', 'active', 'closed',
                                                    'disconnected', 'failed'}
                                 or quote['market_data_type'] is not None

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from .bars import BarSeries
 from .data.cache import HistoricalCache
 from .data.history import HistoryBoundary, normalize_range
-from .errors import PyIBQuantError
+from .errors import ConnectionError, PyIBQuantError
 from .options import OptionChain
 from .quote_stream import QuoteStream
 from .quotes import Option, Quote
@@ -26,6 +26,7 @@ class Market:
         self._provider = provider
         self._operation_lock = RLock()
         self._subscriptions: dict[BarSeries, None] = {}
+        self._quote_subscriptions: dict[QuoteStream, None] = {}
         self._stop = Event()
         self._recovery_thread: Thread | None = None
 
@@ -69,17 +70,31 @@ class Market:
     def stream_quote(
         self, symbol: str | Option, *, primary_exchange: str = "",
         market_data_type: str = "live",
+        reconnect: bool = False,
     ) -> QuoteStream:
         """Own a continuous Level-one subscription independent of chart selection.
 
-        Close the handle explicitly. A disconnect ends it; automatic bar recovery
-        does not restore quotes. Active streams on one connection must request
-        the same feed mode. Use separate connections for different modes.
+        Opt into reconnect to retain the handle across connection loss, with empty
+        fields, new feed confirmation and explicit gap/generation history. Default
+        handles end on disconnect. All active streams must request the same mode.
         """
         with self._operation_lock:
+            if self._stop.is_set():
+                raise ConnectionError('Market is closed')
+            if not isinstance(reconnect, bool):
+                raise ValueError('reconnect must be a boolean')
+            if reconnect and self._recovery_thread is None:
+                raise ValueError('Quote reconnect requires Market.ibkr(reconnect=True)')
             provider = self._provider
-        return provider.stream_quote(symbol, primary_exchange=primary_exchange,
-                                     market_data_type=market_data_type)
+        stream = provider.stream_quote(symbol, primary_exchange=primary_exchange,
+                                       market_data_type=market_data_type, reconnect=reconnect)
+        with self._operation_lock:
+            if self._stop.is_set() or provider is not self._provider:
+                stream.close()
+                raise ConnectionError('Market connection changed during quote subscription')
+            if reconnect:
+                self._quote_subscriptions[stream] = None
+        return stream
 
     def quote(
         self, symbol: str | Option, *, primary_exchange: str = "",
@@ -157,17 +172,26 @@ class Market:
     def _recover(self) -> None:
         """Reopen the socket and restore series in place, preserving chart identity."""
         with self._operation_lock:
-            if self._stop.is_set() or not self._subscriptions:
+            quotes = [stream for stream in self._quote_subscriptions if not stream.closed]
+            if self._stop.is_set() or not (self._subscriptions or quotes):
                 return
             old = self._provider
             for series in self._subscriptions:
                 series.connection_state = "reconnecting"
                 series.status = "Reconnecting to IBKR; existing bars retained"
+            for stream in quotes:
+                stream._state.interrupt('Market connection recovery; quote continuity lost')
+                old.detach_quote(stream)
             old.close()
             replacement = old.new_connection()
             self._provider = replacement
             try:
                 replacement.open()
+                if self._stop.is_set():
+                    replacement.close()
+                    return
+                for stream in quotes:
+                    replacement.restore_quote(stream)
                 for series in self._subscriptions:
                     if self._stop.is_set():
                         replacement.close()
@@ -176,6 +200,9 @@ class Market:
                     if series.include_sessions:
                         replacement.load_sessions(series)
             except (PyIBQuantError, OSError) as exc:
+                for stream in quotes:
+                    stream._state.interrupt(str(exc))
+                    replacement.detach_quote(stream)
                 replacement.close()
                 for series in self._subscriptions:
                     series.connection_state = "reconnecting"
@@ -190,10 +217,14 @@ class Market:
             try:
                 with self._operation_lock:
                     active = list(self._subscriptions)
-                    broken = active and (
+                    self._quote_subscriptions = {
+                        stream: None for stream in self._quote_subscriptions if not stream.closed
+                    }
+                    quotes = list(self._quote_subscriptions)
+                    broken = (active or quotes) and (
                         not self._provider.isConnected() or any(
                             s.connection_state in {"disconnected", "reconnecting"} for s in active
-                        )
+                        ) or any(s.latest().status == 'disconnected' for s in quotes)
                     )
                     if broken:
                         self._recover()
@@ -269,11 +300,16 @@ class Market:
 
     def close(self) -> None:
         self._stop.set()
+        # Close managed owners even between replacement construction and binding.
+        # No control lock is needed to stop/cancel an individual quote stream.
+        for stream in list(self._quote_subscriptions):
+            stream.close()
         self._provider.close()
         if self._recovery_thread is not None:
             self._recovery_thread.join(timeout=self._provider.timeout + 3)
         with self._operation_lock:
             self._subscriptions.clear()
+            self._quote_subscriptions.clear()
 
     def __enter__(self) -> Market:
         return self

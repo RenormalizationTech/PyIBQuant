@@ -38,8 +38,9 @@ TWS. Grouped option discovery, independently owned quote streams and sampled
 recording/offline replay are now implemented and verified with frozen AAPL data.
 The user chose our collected recordings for the first options backtest. An offline
 intraday simulator now uses later observed ask/bid fills, costs, recorded multipliers
-and explicit freshness/size checks. In-session live capture and end-to-end simulation
-verification remain pending.
+and explicit freshness/size checks. In-session live capture and offline simulation
+were verified on 2026-10-16, including conservative skipped fills and unknown
+valuations when price receipts age despite size/Greek updates.
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
@@ -1471,7 +1472,8 @@ handling before moving toward live execution. Chart navigation must not control
 strategy subscriptions or order lifecycle. This target can reuse the first equity
 backtest foundation; it does not depend on chart feature parity. The stock/option
 quote and options research pilot has since been implemented (section 35);
-live-session capture and simulation verification precede broker execution work.
+live-session capture and offline simulation were verified on 2026-10-16.
+Broader live fill/valuation checks and execution prerequisites remain before broker execution.
 
 ---
 
@@ -1487,7 +1489,8 @@ Stock live verification passed. The selected SPY 2026-11-20 770 C contract
 resolved but returned error 10091 (SPY ARCA/TOP/ALL) without bid/ask/Greeks. The
 user then selected AAPL 2026-11-20 340 C: its frozen snapshot returned bid/ask
 and model IV/Greeks with confirmed frozen feed type. The overnight live request
-returned no prices; an in-session live check remains pending. SDK-normalized None
+returned no prices; subsequent in-session live streams returned bid/ask, sizes
+and model IV/Greeks on 2026-10-16. SDK-normalized None
 Greeks and unset Decimal sizes are now handled without disconnecting or inventing
 large sizes. No subscription or account settings were changed.
 The following foundation is now also implemented:
@@ -1498,8 +1501,10 @@ The following foundation is now also implemented:
 - `Market.stream_quote()` provides independent subscription handles, immutable
   observations and per-consumer sequence cursors. No browser polling or user/file
   callback runs on the IBKR reader thread. Mixed requested feed modes on a single
-  active connection are rejected. Disconnects terminate handles explicitly;
-  automatic quote restoration is not implemented.
+  active connection are rejected. Disconnects end default handles; opt-in
+  `reconnect=True` restores exact resolved contracts in empty generations with
+  persistent gap history and new feed confirmation. Permission failures stay terminal.
+  Local recovery checks pass; live recovery verification is blocked by IBKR 10197.
 - `record_quotes()` samples on the caller's thread, preserves field receipt times
   and records unchanged observations. Versioned JSONL includes identity, sampling
   and feed provenance, a completion/error footer and integrity digest.
@@ -1509,8 +1514,9 @@ The following foundation is now also implemented:
 
 AAPL verification returned 41 chain groups and recorded 12 frozen observations,
 10 with bid/ask and 9 with model IV/delta. This verifies acquisition/recording,
-not an exchange tick archive or live trading-session coverage. Automatic quote
-reconnect, chart bid/ask enrichment and historical imports remain planned.
+not an exchange tick archive or live trading-session coverage. Live capture and
+simulation were subsequently verified as recorded below. Quote reconnect is now
+implemented with local checks; chart bid/ask enrichment and historical imports remain planned.
 The user chose our collected recordings for the first backtest.
 
 `pyibquant.option_backtest.backtest_option()` is now a standard-library intraday
@@ -1527,8 +1533,16 @@ exchange quote age, queue priority, market impact or guaranteed liquidity.
 `examples/backtest_option.py` runs hold-window or spread-filter demonstrations
 and exports exact input bytes, input-fingerprinted results/assumptions, strategy settings
 and fill/trade/skip/equity CSV logs without TWS/SDK/optional dependencies.
-The next verification step needs a live intraday recording; frozen AAPL data
-remains diagnostic replay input. Exercise, assignment, overnight carry and
+Live intraday recordings and offline replay were verified on 2026-10-16; frozen
+AAPL data remains diagnostic replay input. Continue live fill/valuation checks
+and live reconnect verification after the competing-live-session error is resolved.
+An explicit `quote_age_basis="side_update"` policy now uses matching live size
+receipts at/after each side's price, without rewriting price timestamps. It retains
+post-signal causality, size/age/skew checks and the original strict default. Both
+live recordings produced a complete simulated round trip under that explicit
+policy, with some intermediate valuations/drawdown still unknown. New recording
+format version 2 retains gap/generation history and loads legacy version 1 inputs;
+the simulator rejects reconnect gaps. Exercise, assignment, overnight carry and
 settlement remain outside this initial simulator.
 
 

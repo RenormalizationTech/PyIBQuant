@@ -31,6 +31,9 @@ def main() -> None:
     parser.add_argument('--max-side-skew', type=float, default=1, help='Receipt skew in seconds')
     parser.add_argument('--max-gap', type=float, default=5, help='Maximum sample gap in seconds')
     parser.add_argument('--latency', type=float, default=0, help='Minimum signal-to-fill seconds')
+    parser.add_argument('--quote-age-basis', choices=['price_receipt', 'side_update'],
+                        default='price_receipt',
+                        help='Original receipts, or matching IBKR side-size updates')
     parser.add_argument('--output-dir', type=Path, default=Path('charts/option-backtest'))
     args = parser.parse_args()
     try:
@@ -48,6 +51,7 @@ def main() -> None:
             commission=args.commission, slippage_bps=args.slippage_bps,
             max_quote_age=args.max_quote_age, max_side_skew=args.max_side_skew,
             max_gap=args.max_gap, latency=args.latency,
+            quote_age_basis=args.quote_age_basis,
         )
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
@@ -57,7 +61,7 @@ def main() -> None:
     for name, columns in [
         ('fills', ['signal_time', 'execution_time', 'side', 'contracts', 'multiplier', 'price',
                    'commission', 'slippage_cost', 'cash_after', 'quote_sequence',
-                   'price_received_at', 'size_received_at']),
+                   'price_received_at', 'size_received_at', 'side_received_at']),
         ('trades', ['entry_time', 'exit_time', 'contracts', 'multiplier', 'entry_price',
                     'exit_price', 'commissions', 'net_pnl', 'return_fraction']),
         ('skipped_fills', ['signal_time', 'observation_time', 'side', 'reason']),

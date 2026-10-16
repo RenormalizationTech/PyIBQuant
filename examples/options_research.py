@@ -29,6 +29,8 @@ def main() -> None:
                         choices=['live', 'frozen', 'delayed', 'delayed_frozen'])
     parser.add_argument('--duration', type=float, default=10)
     parser.add_argument('--interval', type=float, default=1)
+    parser.add_argument('--reconnect', action='store_true',
+                        help='Restore quote subscription after disconnect; record gaps explicitly')
     parser.add_argument('--output-dir', type=Path, default=Path('charts/options-research'))
     args = parser.parse_args()
     fields = (args.expiry, args.strike, args.right)
@@ -53,7 +55,8 @@ def main() -> None:
                 return
             option = chain.select(args.expiry, args.strike, args.right,
                                   trading_class=args.trading_class, multiplier=args.multiplier)
-            with market.stream_quote(option, market_data_type=args.market_data_type) as stream:
+            with market.stream_quote(option, market_data_type=args.market_data_type,
+                                     reconnect=args.reconnect) as stream:
                 path = record_quotes(stream, target / 'quotes.jsonl', duration=args.duration,
                                      interval=args.interval)
         # Reload after all broker connections are closed.
@@ -64,6 +67,9 @@ def main() -> None:
         print(f'Saved {len(recording)} sampled observations ({pairs} with bid/ask) to {path}')
         print(f'Recording complete: {recording.complete}; '
               f'final status: {recording.metadata()["end"]["status"]}')
+        quality = recording.quality()
+        print(f'Quote generation: {quality["generation"]}; '
+              f'recorded gaps: {len(quality["gaps"])}')
         if not recording.complete:
             raise SystemExit('Recording ended early; inspect its terminal '
                              'status/error before research.')

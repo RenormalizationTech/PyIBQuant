@@ -200,3 +200,93 @@ def test_options_research_example_discovers_only_or_records_one_contract(
     else:
         market.stream_quote.assert_not_called()
         assert not list(tmp_path.glob('*/quotes.jsonl'))
+
+
+def test_recording_remembers_gap_even_when_disconnect_and_resume_fall_between_samples(
+    source, tmp_path,
+):
+    stream, state, callbacks = source
+
+    def recover():
+        state.interrupt('lost socket')
+        state.resume()
+        state.tick(1, 101)
+    callbacks.append(recover)
+    path = record_quotes(stream, tmp_path/'reconnected.jsonl', duration=3)
+    recording = QuoteRecording.load(path)
+    assert recording.complete and recording.metadata()['header']['version'] == 2
+    samples = list(recording.samples())
+    assert samples[0]['quote']['generation'] == 0
+    assert samples[1]['quote']['generation'] == 1
+    assert samples[1]['quote']['market_data_type'] is None
+    assert samples[1]['quote']['ask'] is None
+    assert len(recording.quality()['gaps']) == 1
+    assert recording.quality()['generation'] == 1
+
+
+def test_recording_ending_during_recovery_is_incomplete_without_closing_the_handle(
+    source, tmp_path,
+):
+    stream, state, callbacks = source
+    callbacks.append(lambda: state.interrupt('lost socket'))
+    path = record_quotes(stream, tmp_path/'disconnected.jsonl', duration=2)
+    assert not stream.closed
+    with pytest.raises(ValueError, match='Incomplete recording'):
+        QuoteRecording.load(path)
+    recording = QuoteRecording.load(path, allow_incomplete=True)
+    assert not recording.complete
+    assert recording.metadata()['end']['status'] == 'disconnected'
+    assert recording.quality()['gaps'][0]['ended_at'] is None
+
+
+@pytest.mark.parametrize('mutation', [
+    'generation', 'erase', 'carry_price', 'carry_greek', 'revise', 'future', 'boolean',
+])
+def test_gap_provenance_cannot_be_erased_or_revised_with_a_recomputed_digest(
+    source, tmp_path, mutation,
+):
+    stream, state, callbacks = source
+
+    def recover():
+        state.interrupt('lost socket')
+        state.resume()
+        state.tick(1, 101)
+    callbacks.append(recover)
+    path = record_quotes(stream, tmp_path/'reconnected.jsonl', duration=3)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    quote = records[3]['quote']
+    if mutation == 'generation':
+        quote['generation'] = 2
+    elif mutation == 'erase':
+        quote['generation'], quote['gaps'] = 0, []
+    elif mutation == 'carry_price':
+        quote['field_received_at']['bid'] = records[1]['quote']['field_received_at']['bid']
+    elif mutation == 'carry_greek':
+        quote['greeks'] = [dict(received_at=records[1]['quote']['observed_at'])]
+    elif mutation == 'revise':
+        quote['gaps'][0]['reason'] = 'revised history'
+    elif mutation == 'future':
+        quote['gaps'][0]['ended_at'] = '2099-01-01T00:00:00+00:00'
+    elif mutation == 'boolean':
+        quote['generation'] = True
+    lines = [json.dumps(row, sort_keys=True, separators=(',', ':'))+'\n' for row in records[:-1]]
+    records[-1]['sha256'] = hashlib.sha256(''.join(lines).encode()).hexdigest()
+    path.write_text(''.join(lines)+json.dumps(records[-1])+'\n')
+    with pytest.raises(ValueError):
+        QuoteRecording.load(path)
+
+
+def test_original_version_one_recordings_without_continuity_fields_still_load(source, tmp_path):
+    stream, _, _ = source
+    path = record_quotes(stream, tmp_path/'legacy.jsonl', duration=2)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records[0]['version'] = 1
+    for row in records[1:-1]:
+        row['quote'].pop('generation')
+        row['quote'].pop('gaps')
+    lines = [json.dumps(row, sort_keys=True, separators=(',', ':'))+'\n' for row in records[:-1]]
+    records[-1]['sha256'] = hashlib.sha256(''.join(lines).encode()).hexdigest()
+    path.write_text(''.join(lines)+json.dumps(records[-1])+'\n')
+    recording = QuoteRecording.load(path)
+    assert recording.complete and recording.quality()['generation'] == 0
+    assert not recording.quality()['gaps']

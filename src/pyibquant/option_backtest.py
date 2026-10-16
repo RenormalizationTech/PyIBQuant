@@ -30,6 +30,7 @@ class OptionFill:
     quote_sequence: int
     price_received_at: datetime
     size_received_at: datetime
+    side_received_at: datetime
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class OptionBacktestResult:
     max_side_skew: float
     max_gap: float
     latency: float
+    quote_age_basis: str
     signals: tuple[bool, ...]
     fills: tuple[OptionFill, ...]
     trades: tuple[OptionTrade, ...]
@@ -109,14 +111,17 @@ class OptionBacktestResult:
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
         result.pop('_metadata_json')
-        result.update(schema_version=1, input_metadata=json.loads(self._metadata_json),
+        result.update(schema_version=2, input_metadata=json.loads(self._metadata_json),
                       metrics=self.metrics(), execution=dict(
                           source='sampled_option_quotes', signal_timing='after_observation',
-                          fill_timing='later_sample_and_new_side_price_receipt_after_signal',
+                          fill_timing=('later_sample_and_new_side_price_receipt_after_signal'
+                                       if self.quote_age_basis == 'price_receipt' else
+                                       'later_sample_and_new_side_size_receipt_after_signal'),
                           entry='ask_plus_slippage', exit='bid_minus_slippage',
                           size='full_fixed_contract_quantity_with_observed_top_size',
                           valuation='fresh_bid_without_forced_sale_or_exit_cost_estimate',
                           quote_age='local_callback_receipt_proxy_not_exchange_age',
+                          quote_age_basis=self.quote_age_basis,
                           position='long_or_flat', exercise=False, assignment=False,
                           settlement=False, interest=False, taxes=False,
                       ))
@@ -168,28 +173,45 @@ def _number(value: Any, name: str, *, positive: bool = False) -> float:
 def _eligible(
     quote: dict[str, Any], now: datetime, contracts: int, *,
     side: Literal['buy', 'sell'], max_age: float, max_skew: float,
-) -> tuple[str | None, datetime | None, datetime | None]:
+    quote_age_basis: str,
+) -> tuple[str | None, datetime | None, datetime | None, datetime | None]:
     if quote['market_data_type'] != 'live' or quote['delayed_ticks']:
-        return 'unconfirmed_live_feed', None, None
+        return 'unconfirmed_live_feed', None, None, None
     if quote['status'] != 'active' or quote['error'] is not None:
-        return 'inactive_quote', None, None
+        return 'inactive_quote', None, None, None
     if quote['bid'] is None or quote['ask'] is None or min(quote['bid'], quote['ask']) <= 0:
-        return 'missing_bid_ask', None, None
+        return 'missing_bid_ask', None, None, None
     if quote['bid'] > quote['ask']:
-        return 'crossed_quote', None, None
+        return 'crossed_quote', None, None, None
     names = ('bid', 'ask', 'bid_size', 'ask_size')
     receipts = quote['field_received_at']
     if any(receipts.get(name) is None for name in names):
-        return 'missing_receipt_time', None, None
+        return 'missing_receipt_time', None, None, None
     times = {name: _time(receipts[name]) for name in names}
-    if any((now - stamp).total_seconds() > max_age for stamp in times.values()):
-        return 'stale_quote', None, None
-    if (max(times.values()) - min(times.values())).total_seconds() > max_skew:
-        return 'asynchronous_sides', None, None
+    clocks = times
+    if quote_age_basis == 'side_update':
+        # IBKR sends independent tickSize callbacks for unchanged prices. Require
+        # matching live tick families and a size receipt at/after each side's
+        # current price; a new price must wait for its own following size update.
+        if (quote.get('provider') != 'IBKR' or quote.get('source') != 'reqMktData'
+                or any(quote['field_tick_types'].get(name) != tick
+                       for name, tick in {'bid': 1, 'ask': 2,
+                                          'bid_size': 0, 'ask_size': 3}.items())):
+            return 'unverified_side_update', None, None, None
+        if any(times[name+'_size'] < times[name] for name in ('bid', 'ask')):
+            return 'waiting_side_size', None, None, None
+        if any(quote[name] is None for name in ('bid_size', 'ask_size')):
+            return 'missing_side_size', None, None, None
+        clocks = {name: times[name] for name in ('bid_size', 'ask_size')}
+    if any((now - stamp).total_seconds() > max_age for stamp in clocks.values()):
+        return 'stale_quote', None, None, None
+    if (max(clocks.values()) - min(clocks.values())).total_seconds() > max_skew:
+        return 'asynchronous_sides', None, None, None
     price_name, size_name = ('ask', 'ask_size') if side == 'buy' else ('bid', 'bid_size')
     if quote[size_name] is None or quote[size_name] < contracts:
-        return 'insufficient_displayed_size', None, None
-    return None, times[price_name], times[size_name]
+        return 'insufficient_displayed_size', None, None, None
+    side_time = times[size_name] if quote_age_basis == 'side_update' else times[price_name]
+    return None, times[price_name], times[size_name], side_time
 
 
 def backtest_option(
@@ -197,13 +219,14 @@ def backtest_option(
     contracts: int = 1, commission: float = 0, slippage_bps: float = 0,
     max_quote_age: float = 2, max_side_skew: float = 1, max_gap: float = 5,
     latency: float = 0,
+    quote_age_basis: str = 'price_receipt',
 ) -> OptionBacktestResult:
     """Replay one complete, same-NY-date option recording strictly before expiry.
 
     Confirmed-live fields only; frozen/delayed records are rejected, initial unknown
     fields are ineligible. Each signal is a long/flat target after its observation.
-    An intent may fill on a later sample after latency and a new side-price receipt
-    newer than its signal. Unchanged targets retain a pending intent; changed
+    By default an intent may fill on a later sample after latency and a side-price
+    receipt newer than its signal. Unchanged targets retain a pending intent; changed
     targets replace/cancel it after processing the current observation. A position
     never rebalances. Missing/stale/crossed/undersized quotes skip fills. No borrowing,
     shorting, partial fills or invented final exit. Open positions use a qualified
@@ -213,9 +236,15 @@ def backtest_option(
     top sizes do not establish fillability or account for queue/market impact.
     Caller-provided signals must not use future data. No exercise/assignment,
     expiry payoff, overnight carry, account settlement or broker execution model.
+
+    quote_age_basis='side_update' explicitly uses matching IBKR bid/ask size
+    receipts at/after their prices for age/skew and post-signal evidence. Original
+    price receipts remain unchanged. The default requires new price receipts.
     """
     if not recording.complete:
         raise ValueError('Option backtest requires a complete recording')
+    if quote_age_basis not in {'price_receipt', 'side_update'}:
+        raise ValueError('quote_age_basis must be price_receipt or side_update')
     if isinstance(contracts, bool) or not isinstance(contracts, int) or contracts <= 0:
         raise ValueError('contracts must be a positive whole number')
     _number(contracts, 'contracts', positive=True)
@@ -253,6 +282,9 @@ def backtest_option(
                       or (stamp - stamps[index - 1]).total_seconds() > max_gap):
             raise ValueError('Recording has nonincreasing times or a gap exceeding max_gap')
         quote = row['quote']
+        if quote.get('generation', 0) != 0 or quote.get('gaps'):
+            raise ValueError('Recording crosses a quote reconnect gap; '
+                             'cross-generation simulation is not modeled')
         if quote['market_data_type'] not in {None, 'live'} or quote['delayed_ticks']:
             raise ValueError('Frozen/delayed recordings are replay inputs, '
                              'not live backtest inputs')
@@ -279,12 +311,14 @@ def backtest_option(
         if pending is not None:
             desired, signal_time = pending
             side: Literal['buy', 'sell'] = 'buy' if desired else 'sell'
-            reason, price_time, size_time = _eligible(
-                quote, stamp, contracts, side=side, max_age=max_quote_age, max_skew=max_side_skew)
+            reason, price_time, size_time, side_time = _eligible(
+                quote, stamp, contracts, side=side, max_age=max_quote_age, max_skew=max_side_skew,
+                quote_age_basis=quote_age_basis)
             if (stamp - signal_time).total_seconds() < latency:
                 reason = 'waiting_latency'
-            elif reason is None and (price_time is None or price_time <= signal_time):
-                reason = 'waiting_new_side_price'
+            elif reason is None and (side_time is None or side_time <= signal_time):
+                reason = ('waiting_new_side_price' if quote_age_basis == 'price_receipt'
+                          else 'waiting_new_side_update')
             if reason is None:
                 reference = quote['ask'] if desired else quote['bid']
                 price = _finite(reference * (1 + (1 if desired else -1) * slippage_bps / 10000))
@@ -296,10 +330,11 @@ def backtest_option(
                     reason = 'insufficient_cash'
                 else:
                     assert price_time is not None and size_time is not None
+                    assert side_time is not None
                     cash = next_cash
                     fill = OptionFill(signal_time, stamp, side, contracts, multiplier, price,
                                       fee, _finite(contracts * multiplier * abs(price-reference)),
-                                      cash, quote['sequence'], price_time, size_time)
+                                      cash, quote['sequence'], price_time, size_time, side_time)
                     fills.append(fill)
                     if desired:
                         held, entry = contracts, fill
@@ -318,8 +353,9 @@ def backtest_option(
         valuation_reason = None
         equity: float | None = cash
         if held:
-            valuation_reason, _, _ = _eligible(
-                quote, stamp, held, side='sell', max_age=max_quote_age, max_skew=max_side_skew)
+            valuation_reason, _, _, _ = _eligible(
+                quote, stamp, held, side='sell', max_age=max_quote_age, max_skew=max_side_skew,
+                quote_age_basis=quote_age_basis)
             equity = (_finite(cash + held * multiplier * quote['bid'])
                       if valuation_reason is None else None)
         change = (_finite(equity/previous_equity-1) if equity is not None
@@ -337,11 +373,15 @@ def backtest_option(
             pending = target, stamp
     return OptionBacktestResult(
         recording.fingerprint(), initial_cash, contracts, commission, slippage_bps,
-        max_quote_age, max_side_skew, max_gap, latency, targets, tuple(fills), tuple(trades),
+        max_quote_age, max_side_skew, max_gap, latency, quote_age_basis,
+        targets, tuple(fills), tuple(trades),
         tuple(skipped), tuple(curve), (
             'Sampled recorded quotes are not an exchange tick archive '
             'or proof of executable prices.',
             'Age/skew checks use local receipt times, not exchange quote timestamps.',
+            ('Quote clock: matching IBKR side-size receipts confirm accumulated prices; '
+             'price receipt timestamps are preserved.' if quote_age_basis == 'side_update'
+             else 'Quote clock: original price/size receipts; new price after signal required.'),
             'Caller signals must use only information available at their observation time.',
             'Buy at ask/sell at bid with adverse slippage and per-contract commission; '
             'full fills only.',

@@ -412,6 +412,7 @@ class IBKRProvider(EWrapper, EClient):
     def stream_quote(
         self, symbol: str | Option, *, primary_exchange: str = "",
         market_data_type: str = "live",
+        reconnect: bool = False,
     ) -> QuoteStream:
         """Subscribe without waiting for prices; errors/status arrive on the handle."""
         if market_data_type not in DATA_TYPES:
@@ -421,7 +422,8 @@ class IBKRProvider(EWrapper, EClient):
             instrument = self._quote_instrument(contract, isinstance(symbol, Option))
             self._set_quote_mode(market_data_type)
             req_id, request = self._new_request()
-            request.quote = _QuoteState(instrument, market_data_type, streaming=True)
+            request.quote = _QuoteState(instrument, market_data_type, streaming=True,
+                                        reconnect=reconnect)
             stream = QuoteStream(request.quote, lambda: self._cancel_quote(req_id))
             try:
                 self.reqMktData(req_id, contract, "", False, False, [])
@@ -430,6 +432,41 @@ class IBKRProvider(EWrapper, EClient):
                 return stream
             except Exception:
                 self._cancel_quote(req_id)
+                raise
+
+    def detach_quote(self, stream: QuoteStream) -> None:
+        """Remove this generation's callback route without closing the owner."""
+        for req_id, request in list(self._requests.items()):
+            if request.quote is stream._state:
+                self._requests.pop(req_id, None)
+                if self.isConnected():
+                    self.cancelMktData(req_id)
+
+    def restore_quote(self, stream: QuoteStream) -> None:
+        """Restore the exact resolved contract into a fresh, empty generation."""
+        state = stream._state
+        with self._quote_lock, state.lock:
+            if state.completed_at is not None:
+                return
+            instrument = state.instrument
+            contract = Contract()
+            contract.conId = instrument.instrument_id
+            contract.symbol = instrument.symbol
+            contract.secType = 'OPT' if instrument.asset_type == 'option' else 'STK'
+            contract.exchange, contract.currency = instrument.exchange, instrument.currency
+            contract.primaryExchange = instrument.primary_exchange
+            self._set_quote_mode(state.requested_type)
+            req_id, request = self._new_request()
+            request.quote = state
+            stream._cancel = lambda: self._cancel_quote(req_id)
+            state.resume()
+            try:
+                self.reqMktData(req_id, contract, '', False, False, [])
+                if request.error:
+                    raise request.error
+            except Exception:
+                self.detach_quote(stream)
+                state.interrupt('Quote subscription restore failed')
                 raise
 
     def _cancel_quote(self, req_id: int) -> None:
@@ -445,19 +482,26 @@ class IBKRProvider(EWrapper, EClient):
     def tickPrice(self, reqId: int, tickType: int, price: float, attrib: Any) -> None:
         request = self._requests.get(reqId)
         if request is not None and request.quote is not None:
-            request.quote.tick(tickType, price)
+            state = request.quote
+            with state.lock:
+                if self._requests.get(reqId) is request:
+                    state.tick(tickType, price)
 
     def tickSize(self, reqId: int, tickType: int, size: Any) -> None:
         request = self._requests.get(reqId)
         if request is not None and request.quote is not None:
-            request.quote.tick(tickType, size, size=True)
+            state = request.quote
+            with state.lock:
+                if self._requests.get(reqId) is request:
+                    state.tick(tickType, size, size=True)
 
     def marketDataType(self, reqId: int, marketDataType: int) -> None:
         request = self._requests.get(reqId)
         if request is not None and request.quote is not None:
             state = request.quote
             with state.lock:
-                if state.completed_at is not None:
+                if (self._requests.get(reqId) is not request or state.completed_at is not None
+                        or state.status == 'disconnected'):
                     return
                 actual = {value: key for key, value in DATA_TYPES.items()}.get(marketDataType)
                 if state.actual_type is not None and actual != state.actual_type:
@@ -477,8 +521,11 @@ class IBKRProvider(EWrapper, EClient):
     ) -> None:
         request = self._requests.get(reqId)
         if request is not None and request.quote is not None:
-            request.quote.computation(tickType, (impliedVol, delta, optPrice, pvDividend,
-                                                 gamma, vega, theta, undPrice))
+            state = request.quote
+            with state.lock:
+                if self._requests.get(reqId) is request:
+                    state.computation(tickType, (impliedVol, delta, optPrice, pvDividend,
+                                                gamma, vega, theta, undPrice))
 
     def tickSnapshotEnd(self, reqId: int) -> None:
         request = self._requests.get(reqId)
@@ -934,6 +981,8 @@ class IBKRProvider(EWrapper, EClient):
             return
         if request.quote is not None and errorCode in {10090, 10091, 10167}:
             with request.quote.lock:
+                if self._requests.get(reqId) is not request:
+                    return
                 request.quote.warnings.append(message)
                 request.quote.notify()
             return
@@ -942,12 +991,17 @@ class IBKRProvider(EWrapper, EClient):
                 request.series.warnings.append(message)
             if request.quote is not None:
                 with request.quote.lock:
+                    if self._requests.get(reqId) is not request:
+                        return
                     request.quote.warnings.append(message)
                     request.quote.notify()
             return
         request.error = DataError(message)
         if request.quote is not None and request.quote.streaming:
-            request.quote.finish("failed", message)
+            with request.quote.lock:
+                if self._requests.get(reqId) is not request:
+                    return
+                request.quote.finish("failed", message)
         if request.series is not None:
             request.series.error = message
             request.series.status = "Data request failed"
@@ -955,15 +1009,23 @@ class IBKRProvider(EWrapper, EClient):
 
     def _fail_pending(self, error: Exception) -> None:
         with self._request_lock:
-            for request in list(self._requests.values()):
-                request.error = error
-                if request.quote is not None and request.quote.streaming:
-                    request.quote.finish("closed" if self._closing else "disconnected", str(error))
-                if request.series is not None:
-                    request.series.error = str(error)
-                    request.series.status = "Disconnected"
-                    request.series.connection_state = "disconnected"
-                request.done.set()
+            requests = list(self._requests.items())
+        for req_id, request in requests:
+            request.error = error
+            if request.quote is not None and request.quote.streaming:
+                with request.quote.lock:
+                    if self._requests.get(req_id) is not request:
+                        continue
+                    if request.quote.reconnect and not self._closing:
+                        request.quote.interrupt(str(error))
+                    else:
+                        request.quote.finish("closed" if self._closing else "disconnected",
+                                             str(error))
+            if request.series is not None:
+                request.series.error = str(error)
+                request.series.status = "Disconnected"
+                request.series.connection_state = "disconnected"
+            request.done.set()
 
     def connectionClosed(self) -> None:
         self._connection_error = ConnectionError("IBKR connection closed")

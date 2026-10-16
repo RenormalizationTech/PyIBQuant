@@ -4,6 +4,11 @@ Last reconciled: 2026-10-16. Checkboxes describe implemented behavior, not a rel
 The full project direction remains in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
+Current status: live work stopped at the user's request. Quote-recovery verification
+is blocked by IBKR 10197 (competing live session). Resume that check only when the
+user confirms market-data access is available. Offline validation: 356 tests,
+Ruff and mypy pass.
+
 ## Goal and scope
 
 Make IBKR convenient to use from Python for quantitative research, backtesting
@@ -66,11 +71,11 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Optional entry/exit and performance visualizations
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
-Next: collect and verify live options during their trading session, then run the
-first options simulation on those observations. The user chose our collected
-recordings. Discovery and sampled quote collection are implemented and verified
-with frozen AAPL option data. Keep
-paper execution separate; the simulator does not submit orders or model account
+Live-session option capture and offline simulation were verified on 2026-10-16.
+Next: finish live quote-recovery verification after IBKR 10197 (competing live
+session) is cleared, then recording rotation/large-file replay. The user chose our
+collected recordings; both frozen and live AAPL acquisition/replay have been
+verified. Keep paper execution separate; the simulator does not submit orders or model account
 settlement, dividends, taxes, liquidity or historical nominal-share execution.
 
 ## Stock/option quote foundation
@@ -85,7 +90,7 @@ settlement, dividends, taxes, liquidity or historical nominal-share execution.
 - [x] Resolve user-selected SPY 2026-11-20 770 C identity/multiplier against TWS
 - [x] Frozen AAPL 2026-11-20 340 C bid/ask and model IV/Greeks verified via TWS
 - [x] Handle SDK-normalized None Greeks and UNSET_DECIMAL sizes
-- [ ] In-session live option quote/Greeks verification (overnight live request had no prices)
+- [x] In-session live option bid/ask, sizes and model IV/Greeks verified (2026-10-16)
 - [ ] Optional SPY retry after resolving its 10091 SPY ARCA/TOP/ALL permission message
 - [x] Grouped option-chain discovery with explicit, unverified candidate selection
 - [x] Independently owned continuous stock/option quote subscriptions and consumer cursors
@@ -96,8 +101,14 @@ settlement, dividends, taxes, liquidity or historical nominal-share execution.
 - [x] Recorded multiplier, displayed-size/cash checks, configurable costs/latency/receipt age/skew
 - [x] Reject frozen/delayed/excessively gapped/overnight/expiry inputs; expose unpriced positions
 - [x] Hand-checked accounting/causality tests and offline example with input/JSON/CSV exports
-- [ ] Collect confirmed-live intraday AAPL observations and verify end-to-end simulation
-- [ ] Quote reconnect with explicit generation/gap recording; file rotation/large-file replay
+- [x] Collect confirmed-live intraday AAPL observations and verify capture-to-offline simulation (2026-10-16)
+- [x] Explicit side-update freshness policy with original price clocks, matching live tick families and post-signal size confirmation
+- [x] Simulated round-trip entry/exit accounting verified on both live recordings with the explicit side-update policy
+- [ ] Broaden live valuation coverage; asynchronous/quiet sides can still leave marks unknown
+- [x] Opt-in quote reconnect with exact contract identity, empty replacement generations and persistent gap history
+- [x] Version 2 recording/replay continuity checks, legacy version 1 loading, cross-gap backtest rejection
+- [ ] Live quote-recovery integration verification (blocked by IBKR 10197 competing live session)
+- [ ] Recording file rotation/large-file replay
 - [ ] Chart bid/ask display
 - [ ] Historical quote imports, richer liquidity models and expiry/exercise/assignment semantics
 

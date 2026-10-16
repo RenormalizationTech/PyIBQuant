@@ -1,12 +1,15 @@
 # Development handoff
 
-Checkpoint: 2026-10-16. This document records the chart-foundations implementation
-and local validation. Snapshot commit e42aede records the session/recovery/research
-and frozen-dataset foundations. Commit 95fbdaf records the daily equity backtest.
-Commit 1d3809d records option discovery, quote streams and recording/replay;
-a02edcc adds intraday option backtests from those recordings. Later cleanup is
-recorded in Git. Start with `git status -sb` and `git log -1` after transferring work.
-Remote synchronization is visible in Git; this checkpoint is not a release.
+Checkpoint: 2026-10-16. Live option capture, explicit side-update simulation and
+opt-in quote reconnect are implemented. All 356 local tests, Ruff and mypy pass.
+Live reconnect verification remains blocked by IBKR 10197 (competing live session).
+The user cannot restore market-data access now and explicitly stopped live work.
+Do not retry the live check until the user asks to resume and confirms access.
+
+The current changes are saved as a local Git checkpoint; inspect `git log -1` and
+`git status -sb` when resuming or transferring machines. No remote push is part of
+this checkpoint. Generated market data/reports remain local under ignored
+`charts/`. This is a development checkpoint, not a release.
 
 ## Where to resume
 
@@ -27,9 +30,12 @@ also implemented. The first daily equity backtest now works offline. Grouped
 option discovery, independent quote streams and sampled recording/offline replay
 are now implemented. Frozen AAPL integration checks pass. The user chose our
 collected recordings for the first options backtest. Its intraday, SDK-free
-long/flat simulator and offline JSON/CSV example are now implemented. Next: collect
-confirmed-live intraday observations and validate the complete pipeline.
-In-session live option verification remains pending.
+long/flat simulator and offline JSON/CSV example are now implemented. Live-session
+capture and offline simulation were verified on 2026-10-16. An explicit side-update
+freshness policy now completes simulated round trips on both live recordings.
+Opt-in quote reconnect and gap/generation recording have local test coverage.
+Next: finish live quote-recovery verification after IBKR 10197 (competing live
+session) is cleared. See the follow-ups below for evidence and limitations.
 Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
@@ -45,6 +51,113 @@ can be recovered or sampled quotes are a full tick archive.
 Keep manual `ibapi` installation and logged-in TWS/Gateway as prerequisites for
 IBKR access. CI and automated SDK distribution are outside current scope. Keep
 local unit, browser and explicit TWS integration checks.
+
+## Quote freshness and reconnect follow-up — 2026-10-16
+
+The earlier strict-clock results below are preserved as baseline evidence. IBKR's
+[streaming-data documentation](https://www.interactivebrokers.com/docs/tws-api/doc/md/streaming-data)
+explains that size changes can arrive without repeating an unchanged price.
+`backtest_option(..., quote_age_basis="side_update")` now explicitly uses matching
+live bid/ask size confirmations at/after the corresponding current prices. Both
+side clocks must satisfy age/skew; the execution side needs a post-signal update.
+A new price waits for its following size. Price receipts are never rewritten;
+last/Greek/opposite-side activity cannot renew the execution side. The original
+`price_receipt` policy remains the default with unchanged execution behavior.
+Result schema version 2 records the policy and all three fill clocks
+(`price_received_at`, `size_received_at`, `side_received_at`).
+
+Both original live recordings were rerun offline with the explicit side-update
+policy, retaining commission 1 per contract/fill, 5 bps slippage and default
+age/skew/latency limits:
+
+- November 340 C: one completed simulated round trip, net P&L -38.4125,
+  final cash/equity 9961.5875, zero ending contracts, two unpriced observations.
+- October 345 C: one completed simulated round trip, net P&L -32.42,
+  final cash/equity 9967.58, zero ending contracts, ten unpriced observations.
+- Both retain unknown full-path drawdown. These short runs validate simulation
+  accounting, not profitability or executable liquidity. The strict policy still
+  leaves both positions open and final equity unknown.
+- Each original capture directory now also contains `hold-window-side-update/`
+  with exact inputs, results, CSV logs and `validation.json`. Independent audits
+  passed byte/fingerprint equality, identical replay, post-signal side confirmation,
+  unchanged original price receipts, ask/bid costs, cash and round-trip accounting.
+
+`Market.stream_quote(..., reconnect=True)` now opts into the existing Market
+recovery supervisor (requires `Market.ibkr(reconnect=True)`). Recovery preserves
+owner and cursor identity, reissues the exact conId and discards old prices, sizes,
+Greeks and feed confirmation immediately. Every replacement increments `generation`.
+Immutable `gaps` retain disconnect time/reason and replacement request time, even
+when the outage falls between samples. Replacement time does not certify restored
+quote availability or exchange continuity. Terminal data/permission failures are
+not retried; owner cancellation prevents resurrection. Late callbacks from a
+retired request cannot modify the replacement state.
+
+New quote recordings use format version 2; version 1 still loads. Replay validates
+gap history and generation progression, rejects carried pre-gap fields and preserves
+outages missed by sampling. A duration ending disconnected is incomplete. All
+reconnect-gap recordings are refused by the first simulator, even if recording
+begins after recovery. File rotation, closed-file resume and large-file streaming
+replay remain planned.
+
+Run `python tests/live_quote_recovery_check.py` after restoring TWS market-data
+access. It uses client 217, disconnects only its own socket during a short capture,
+and checks new live fields, gap-preserving offline reload, selective cancellation
+and simulator rejection. The 2026-10-16 attempt at about 13:37 New York time
+resolved the contract but received **IBKR 10197: No market data during competing
+live session**, before reaching the intentional socket disconnect. Thus live
+recovery is not yet verified. The user confirmed access cannot be restored now
+and requested that work stop here. Resume only after the user confirms this TWS
+session is ready; no TWS settings or other sessions were altered.
+
+Local checks cover default compatibility, side-update causality, missing/mismatched
+size evidence, latency, costs, quote-only reconnect, retry failures, terminal 10197,
+close during restore, retired callbacks waiting on locks, gap tampering and legacy
+recordings. All 356 local tests, Ruff and mypy pass. Rerun
+`python -m pytest -q` after subsequent edits. No orders were submitted.
+
+## Live options validation baseline — 2026-10-16
+
+Data-only TWS capture on port 7497 succeeded during the New York trading session
+at approximately 13:24–13:27. Both runs discovered 41 chain groups and closed
+their streams/connections before offline simulation. No broker orders were submitted.
+
+- AAPL 2026-11-20 340 C: 60 seconds at 0.5-second intervals; 120 samples,
+  118 confirmed-live bid/ask and model IV/delta observations, two initial unknown
+  feed samples, 69 distinct observed versions. Local artifact directory:
+  `charts/live-options-validation/20261016T172405542548Z/`.
+- AAPL 2026-10-23 345 C: 120 seconds at 0.5-second intervals; 240 samples,
+  239 confirmed-live bid/ask observations, 238 with model IV/delta, one initial
+  unknown feed sample, 147 distinct observed versions. Local artifact directory:
+  `charts/live-options-validation/20261016T172529876813Z/`.
+- Both recordings completed with valid integrity checks, no crossed pairs and no
+  frozen/delayed samples. Each directory retains `chain.json`, `quotes.jsonl`,
+  `validation.json`, and `hold-window/` and `spread-filter/` result exports.
+- Both strategies used one contract, 10,000 initial cash, commission 1 per
+  contract per fill, 5 bps adverse slippage, and unchanged default receipt-age/skew
+  limits. Hold-window used 30 seconds; spread-filter used a 5% relative spread.
+- November hold-window entered at 14.30715 including slippage, leaving cash
+  8568.285. October hold-window entered at 4.352175, leaving cash 9563.7825.
+  Both remained long one contract; final equity, total return and drawdown were
+  unknown. Exit attempts were blocked by stale price receipt times.
+- Size/Greek callbacks continued while prices stayed unchanged or updated too
+  infrequently for the two-second age and one-second skew checks. An active live
+  feed does not imply every field has a recent receipt. Neither clock was reset
+  from unrelated callbacks and no eligibility limit was loosened.
+- November spread-filter produced no fills (new-price/age/skew gates); October
+  spread-filter stayed flat because the spread exceeded its 5% threshold.
+- Independent offline audits passed exact exported input bytes/fingerprints,
+  identical rerun results, fill timing after signals/new price receipts, ask/bid
+  slippage, cash/position accounting and realized-P&L consistency. Neither live
+  recording produced a completed trade under the strict default. The subsequent
+  explicit side-update policy completes both round trips, as recorded above.
+- All 317 local tests passed, including 81 focused option discovery, recording,
+  stream and backtest tests. No production code change was needed for this check.
+
+This baseline led to the side-update policy and reconnect implementation described
+above. Further valuation coverage, live reconnect verification, recording rotation
+and large-file replay remain open. Exercise/assignment/settlement and broker
+execution remain separate work. Generated data and reports stay local under
+ignored `charts/`.
 
 ## Architecture to preserve and boundaries to improve
 
@@ -745,10 +858,11 @@ counts and chart screenshots are local artifacts, not fixtures or release data.
 - Exact-query cache only; no coverage merging, automatic pruning or disk-size limit.
 - Historical bars are US stock/ETF TRADES only, with no delayed-history fallback.
 - US stock/ETF quote snapshots, selected streams and grouped option discovery are implemented.
-- Quote streams terminate on disconnect; no automatic quote recovery or file resume/rotation.
+- Default quote handles end on disconnect; opt-in recovery clears fields and records gaps.
+- Live quote-recovery verification is blocked by IBKR 10197; file resume/rotation remain planned.
 - Sampled recordings are not tick archives; replay loads files in memory.
-- The option simulator is intraday, long/flat and pre-expiry only; live-session
-  pipeline verification and exercise/assignment/settlement modeling remain pending.
+- The option simulator is intraday, long/flat and pre-expiry only; exercise/assignment/settlement modeling remains pending. Live capture/replay
+  passed, with receipt-age/skew rules restricting fills and valuations.
 - Depth, chart bid/ask display and historical option quote imports are not implemented.
 - IBKR limits/entitlements apply; fixed ranges page automatically, legacy lookbacks remain single requests.
 - Live bars remain in memory without a retention limit; full snapshots are polled/redrawn.

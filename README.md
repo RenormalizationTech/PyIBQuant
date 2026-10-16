@@ -28,8 +28,10 @@ stocks and explicit option selectors, with live stock and frozen option snapshot
 verified against TWS. Grouped option discovery, independently owned quote streams
 and sampled recording/offline replay are also implemented. The first intraday
 option simulator now consumes our collected recordings with explicit ask/bid
-fills, costs and quote-quality checks. Next: collect confirmed-live samples and
-verify the full pipeline during trading hours. User-controlled paper trading
+fills, costs and quote-quality checks. Live-session capture and offline simulation were verified on 2026-10-16.
+Quote reconnect with explicit generation/gap recording is implemented with local
+checks; its live recovery check is blocked by IBKR 10197 (competing live session).
+Next: restore live-data access and verify recovery; file rotation remains planned. User-controlled paper trading
 remains on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
 the project owner's primary personal interest. A focused options research pilot
@@ -358,8 +360,8 @@ The user-selected SPY 2026-11-20 770 C resolved successfully, but TWS returned
 error 10091 (additional API data permissions, SPY ARCA/TOP/ALL) and no bid/ask
 or Greeks. The alternative AAPL 2026-11-20 340 C returned frozen bid/ask and
 model IV/Greeks on 2026-10-16, with reported feed type frozen. Its live request
-returned no prices during the overnight check; in-session live option verification
-remains pending. Live AAPL stock snapshots also passed. Missing SDK-normalized
+returned no prices during the overnight check; in-session live option streams subsequently returned bid/ask, sizes and
+model IV/Greeks on 2026-10-16. Live AAPL stock snapshots also passed. Missing SDK-normalized
 Greeks and unset Decimal sizes are preserved as None.
 
 `Market.quote()` calls **`reqMktData(snapshot=True, regulatorySnapshot=False)`**,
@@ -467,9 +469,18 @@ if newer.sequence > observation.sequence:
 Timeout returns the current observation, possibly with the same sequence.
 Intermediate callbacks can coalesce; this API is not a tick-by-tick queue.
 Closing, terminal permission errors and disconnects wake waiters. The first
-terminal cause is retained; disconnected handles do not resume automatically.
-Open a new stream explicitly and keep recording gaps visible. Automatic historical
-bar recovery does not restore quote streams. Active streams on one connection
+terminal cause is retained. By default, disconnects end a quote handle. Opt into
+`market.stream_quote(option, reconnect=True)` to let the Market recovery supervisor
+restore the same handle and exact resolved contract. This requires the default
+`Market.ibkr(reconnect=True)` supervisor. Connection loss immediately clears prices,
+sizes, Greeks and feed confirmation. Each replacement subscription starts a new
+`generation` and must receive fresh fields and a new feed-type confirmation.
+Sequence cursors remain monotonic. `gaps` retains the start/reason, previous
+generation, and replacement-subscription time/new generation, even if disconnect
+and recovery fall between samples. Gap end means a new request was issued, not
+that quotes are available or exchange continuity is restored. Terminal data or
+permission failures are not retried. Closing a handle during recovery prevents
+resubscription and cancels only that handle. Active streams on one connection
 must request the same feed mode; conflicting snapshot/stream modes fail before
 changing it. Use separate Market connections for simultaneous different modes.
 
@@ -488,8 +499,14 @@ Interrupted/failed/closed streams and missing footers require
 line may be recovered in that mode; checksum failures are always rejected. Replay
 returns independent JSON records. `quality()` reports bid/ask availability, crossed
 pairs, delayed/frozen/unknown feed counts and model IV/delta availability without
-certifying execution prices. It loads a recording in memory; disk rotation,
-automatic resume and a large-file streaming reader remain future work.
+certifying execution prices. New recordings use format version 2 and retain full
+generation/gap history in each observation; version 1 recordings still load.
+Replay rejects generation rollback, revised/erased observed gaps and pre-gap fields
+carried into a replacement generation. A duration ending while disconnected is
+incomplete. Opt-in quote recovery can continue recording in the same open file;
+resuming a closed file, disk rotation and large-file streaming replay remain planned.
+The first options simulator rejects every recording with a reconnect gap, including
+recordings started after recovery; cross-generation simulation is not modeled.
 
 The runnable example discovers a chain alone, or records one selected contract:
 
@@ -501,8 +518,8 @@ python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --righ
 Each run creates a timestamped directory under ignored `charts/options-research/`.
 `python tests/live_options_research_check.py` verified 41 AAPL chain groups and a
 six-second recording of the selected call: 12 samples, 10 with bid/ask and 9 with
-model IV/delta, with confirmed frozen feed labels. In-session live option
-verification and historical option imports remain separate work. Frozen samples
+model IV/delta, with confirmed frozen feed labels. In-session live capture and offline simulation
+were subsequently verified on 2026-10-16; historical option imports remain planned. Frozen samples
 are not historical live trading observations.
 
 ### First options backtest from our recordings
@@ -563,9 +580,42 @@ An unavailable valuation stays `None`; period returns across it and full-path
 drawdown remain unknown. An eventual valid final mark can restore final return,
 while `valuation_complete` remains false. Exercise, assignment, expiry payoff,
 overnight carry, settlement, interest and taxes are outside this first model.
-Hand-calculated and causal offline tests pass; a real live-session capture and
-simulation check remain pending. Existing frozen AAPL recordings are rejected
+Hand-calculated and causal offline tests pass. Live-session recording and offline
+simulation were also verified on 2026-10-16. Unchanged bid/ask prices can exceed
+the receipt-age limit despite ongoing size/Greek updates, blocking fills and
+leaving held positions unpriced; the checks are not relaxed for validation. Existing frozen AAPL recordings are rejected
 as backtest inputs and remain available for diagnostic replay.
+
+### Explicit unchanged-price side updates
+
+IBKR can send a size callback without repeating an unchanged price, as documented
+in [IBKR streaming data](https://www.interactivebrokers.com/docs/tws-api/doc/md/streaming-data).
+The default `quote_age_basis="price_receipt"` preserves the original simulator's
+requirement for recent price/size receipts and a new side-price receipt after the
+signal. Select `quote_age_basis="side_update"` explicitly to use matching live IBKR
+bid/ask size callbacks at or after each side's recorded price. Both sides must
+have recent size confirmations within `max_side_skew`; a new price waits for its
+following size callback. Missing prices, mismatched tick families, zero/insufficient
+side size, delayed/frozen feeds, latency and reconnect-gap checks still apply.
+Only a later execution-side size receipt can satisfy a pending signal. Last-trade,
+opposite-side and Greek updates cannot renew that side. Original price receipts
+are preserved; neither policy establishes exchange quote age or executable liquidity.
+
+```sh
+python examples/backtest_option.py "charts/options-research/<run>/quotes.jsonl" --hold-seconds 30 --commission 1 --slippage-bps 5 --quote-age-basis side_update
+python examples/options_research.py AAPL --expiry 2026-11-20 --strike 340 --right C --market-data-type live --duration 60 --reconnect
+python tests/live_quote_recovery_check.py
+```
+
+Result schema version 2 records `quote_age_basis` and each fill's `side_received_at`
+alongside unchanged `price_received_at` and `size_received_at`; CSV exports include
+all three clocks. On the two 2026-10-16 live AAPL recordings, the explicit
+side-update policy completed one simulated round trip each, net -38.4125 and
+-32.42 with commission 1 and 5 bps adverse slippage. Some intermediate valuations
+remained unknown, so full-path drawdown is still unknown. These short demonstration
+runs validate mechanics, not strategy performance. The strict default still blocks
+both exits. Quote recovery has local coverage; the live recovery check was blocked
+before any intentional disconnect by error 10197 (competing live session).
 
 ### HTML snapshot
 

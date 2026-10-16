@@ -15,7 +15,8 @@ class QuoteStream:
     latest() copies the accumulated fields. Independent consumers use their own
     sequence cursor with wait_for_update(); intermediate callbacks can coalesce.
     No user code or file IO executes on the IBKR callback thread. Close explicitly
-    or use a context manager. Disconnects end the handle; resubscribe explicitly.
+    or use a context manager. Opt-in reconnect keeps the handle, clears fields and
+    records every gap/generation. Otherwise disconnects end the handle.
     """
 
     def __init__(self, state: _QuoteState, cancel: Callable[[], None]) -> None:
@@ -48,6 +49,9 @@ class QuoteStream:
             return self._state.completed_at is not None
 
     def close(self) -> None:
+        # Mark closed before touching the provider so recovery cannot resurrect a
+        # handle while cancellation races with a replacement subscription.
+        self._state.finish('closed')
         self._cancel()
 
     def __enter__(self) -> QuoteStream:

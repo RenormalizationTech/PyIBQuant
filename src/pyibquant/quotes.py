@@ -77,6 +77,15 @@ class OptionGreeks:
 
 
 @dataclass(frozen=True)
+class QuoteGap:
+    started_at: datetime
+    ended_at: datetime | None
+    reason: str
+    previous_generation: int
+    next_generation: int | None
+
+
+@dataclass(frozen=True)
 class Quote:
     """Available snapshot/stream fields from reqMktData; absence is represented by None.
 
@@ -106,6 +115,8 @@ class Quote:
     observed_at: datetime | None = None
     status: str = 'completed'
     error: str | None = None
+    generation: int = 0
+    gaps: tuple[QuoteGap, ...] = ()
 
     @property
     def crossed(self) -> bool:
@@ -170,6 +181,9 @@ class _QuoteState:
     sequence: int = 0
     status: str = 'collecting'
     error: str | None = None
+    reconnect: bool = False
+    generation: int = 0
+    gaps: list[QuoteGap] = field(default_factory=list)
     changed: Any = field(init=False)
 
     def __post_init__(self) -> None:
@@ -189,6 +203,37 @@ class _QuoteState:
             self.error = error if error is not None else self.error
             self.notify()
 
+    def interrupt(self, error: str) -> None:
+        """Invalidate accumulated fields immediately; retain evidence across retries."""
+        with self.lock:
+            if self.completed_at is not None:
+                return
+            if not self.gaps or self.gaps[-1].ended_at is not None:
+                self.gaps.append(QuoteGap(datetime.now(UTC), None, error, self.generation, None))
+            self.values.clear()
+            self.receipts.clear()
+            self.tick_types.clear()
+            self.greeks.clear()
+            self.actual_type = None
+            self.delayed = False
+            self.status, self.error = 'disconnected', error
+            self.notify()
+
+    def resume(self) -> None:
+        """Start an empty generation; feed mode must be reconfirmed by IBKR."""
+        with self.lock:
+            if self.completed_at is not None:
+                return
+            if not self.gaps or self.gaps[-1].ended_at is not None:
+                self.interrupt('Quote subscription replaced; continuity lost')
+            self.generation += 1
+            if self.gaps and self.gaps[-1].ended_at is None:
+                gap = self.gaps[-1]
+                self.gaps[-1] = QuoteGap(gap.started_at, datetime.now(UTC), gap.reason,
+                                        gap.previous_generation, self.generation)
+            self.status, self.error = 'collecting', None
+            self.notify()
+
     def tick(self, tick_type: int, value: Any, *, size: bool = False) -> None:
         mapping = {0: 'bid_size', 3: 'ask_size', 5: 'last_size',
                    69: 'bid_size', 70: 'ask_size', 71: 'last_size'} if size else {
@@ -197,7 +242,7 @@ class _QuoteState:
         if name is None:
             return
         with self.lock:
-            if self.completed_at is not None:
+            if self.completed_at is not None or self.status == 'disconnected':
                 return
             self.values[name] = _number(value, allow_zero=size)
             self.receipts[name] = datetime.now(UTC)
@@ -216,7 +261,7 @@ class _QuoteState:
         if normalized_delta is not None and normalized_delta > 1:
             normalized_delta = None
         with self.lock:
-            if self.completed_at is not None:
+            if self.completed_at is not None or self.status == 'disconnected':
                 return
             self.delayed |= tick_type >= 80
             self.greeks[source] = OptionGreeks(
@@ -260,4 +305,5 @@ class _QuoteState:
                 tuple(self.greeks[key] for key in sorted(self.greeks)), tuple(warnings),
                 streaming=self.streaming, sequence=self.sequence, observed_at=datetime.now(UTC),
                 status=self.status if self.streaming else 'completed', error=self.error,
+                generation=self.generation, gaps=tuple(self.gaps),
             )
