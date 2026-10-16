@@ -32,7 +32,10 @@ example are now implemented with offline and live TWS validation. Frozen dataset
 save/reload and explicit calendar/finality comparison are also implemented. A first
 daily equity backtest now handles prior-close targets, next-open fills, fixed
 whole-share sizing, configurable costs and performance accounting. Next prioritize
-stock/option quotes and an options pilot; broker-connected paper execution remains planned.
+the options pilot: stock/explicit-option Level-one snapshots now work, with stock
+feed verification against TWS and option callback tests offline. Live option
+verification, discovery and recording come next. Broker-connected paper execution
+remains planned.
  [TODO.md](TODO.md) orders the work.
 [HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where to resume.
 Later phases below remain plans, not implemented APIs.
@@ -1003,7 +1006,7 @@ Python User
 - [x] connection configuration
 - [x] contract resolution
 - [x] historical bar requests
-- [x] live bar updates via historical-data subscription (tick quotes remain future work)
+- [x] live bar updates via historical-data subscription (continuous tick quote subscriptions remain future work)
 - [x] normalized timestamps
 - [x] canonical bar representation
 - [x] structured exceptions
@@ -1463,6 +1466,20 @@ quote and options research pilot is the next implementation priority.
 ---
 
 # 35. Options Pilot and Later Expansion
+
+Implemented first step: `Market.quote()` returns an immutable Level-one snapshot
+using reqMktData with regulatory snapshots disabled. Stocks and explicit US
+equity/ETF option selectors are supported; ambiguous contracts are rejected and
+actual multipliers retained. Requested/reported feed type, delayed tick IDs,
+local receipt times, missing/crossed quotes and partial entitlements remain
+explicit. Available bid/ask/last/model computations are kept separately.
+Stock live verification passed. The selected SPY 2026-11-20 770 C contract
+resolved, but bid/ask/Greeks verification is blocked by TWS error 10091
+(additional API data permissions, SPY ARCA/TOP/ALL); delayed-mode versus live
+permission verification awaits user input.
+This is snapshot acquisition, not continuous streaming, chain discovery,
+historical quotes, chart bid/ask enrichment or a complete options backtest engine.
+
 
 Options trading/backtesting is an explicit product priority. After the shared
 research/equity-backtest foundation, introduce a stock/option quote API and an

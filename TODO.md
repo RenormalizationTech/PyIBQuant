@@ -34,8 +34,9 @@ show bid/ask/spread and available IV/Greeks, and support collecting selected quo
 for later research. Historical option dataset imports and explicit spread/fill
 models follow; full options backtesting also needs expiry/exercise/assignment
 semantics. Do not assume IBKR can reconstruct expired option histories, or that
-recorded sampled quotes form a complete exchange tick archive. These are plans,
-not implemented features.
+recorded sampled quotes form a complete exchange tick archive. Explicit option
+quote snapshots now have offline verification; chain discovery, recording and
+options backtesting remain plans.
 
 ## Python research data workflow
 
@@ -63,9 +64,25 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Optional entry/exit and performance visualizations
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
-Next: implement the stock/option quote API and options research pilot. Keep
+Next: resolve live option verification data permissions or test delayed mode, then
+add discovery and selected quote collection for the options research pilot. Keep
 paper execution separate; the simulator does not submit orders or model account
 settlement, dividends, taxes, liquidity or historical nominal-share execution.
+
+## Stock/option quote foundation
+
+- [x] Separate Level-one snapshot API via reqMktData; no regulatory snapshots
+- [x] Immutable bid/ask/last and sizes with contract identity and JSON export
+- [x] Explicit requested/reported feed type, delayed tick IDs and local receipt timestamps
+- [x] Missing/crossed quotes and permission failures remain visible
+- [x] Explicit option selectors resolve one contract and retain actual multiplier
+- [x] Preserve available bid/ask/last/model IV/Greeks separately (offline verified)
+- [x] Live AAPL stock snapshot verification against TWS
+- [x] Resolve user-selected SPY 2026-11-20 770 C identity/multiplier against TWS
+- [ ] Live option quote/Greeks verification (TWS 10091, SPY ARCA/TOP/ALL; awaiting mode/permissions decision)
+- [ ] Option-chain discovery and selected contract quote collection
+- [ ] Continuous quote subscriptions and chart bid/ask display
+- [ ] Historical quote imports and options-specific spread/fill/expiry semantics
 
 ## Execution architecture prerequisites
 

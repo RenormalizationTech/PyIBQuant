@@ -13,6 +13,7 @@ from .bars import BarSeries
 from .data.cache import HistoricalCache
 from .data.history import HistoryBoundary, normalize_range
 from .errors import PyIBQuantError
+from .quotes import Option, Quote
 
 if TYPE_CHECKING:
     from .data.providers.ibkr import IBKRProvider
@@ -56,6 +57,22 @@ class Market:
             )
             market._recovery_thread.start()
         return market
+
+    def quote(
+        self, symbol: str | Option, *, primary_exchange: str = "",
+        market_data_type: str = "live",
+    ) -> Quote:
+        """Return one immutable Level-one snapshot, separate from historical bars.
+
+        Uses standard reqMktData, never a regulatory snapshot. Missing fields stay
+        None; actual delayed/frozen feed type and local receipt times are explicit.
+        Snapshot completion normally takes about 11 seconds; use a longer timeout.
+        A disconnect raises instead of silently reissuing the snapshot request.
+        """
+        with self._operation_lock:
+            provider = self._provider
+        return provider.quote(symbol, primary_exchange=primary_exchange,
+                              market_data_type=market_data_type)
 
     def bars(
         self,

@@ -5,8 +5,9 @@ from .data.cache import HistoricalCache
 from .dataset import BarDataset, CoverageAudit
 from .errors import HistoricalRangeError
 from .market import Market
+from .quotes import Option, Quote
 
 __all__ = [
     "Bar", "BarDataset", "BarSeries", "CoverageAudit", "HistoricalCache", "HistoricalRangeError",
-    "Market",
+    "Market", "Option", "Quote",
 ]

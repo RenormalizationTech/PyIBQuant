@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pyibquant
-from pyibquant import Bar, BarDataset, BarSeries, HistoricalRangeError, Market
+from pyibquant import Bar, BarDataset, BarSeries, HistoricalRangeError, Market, Option
 from pyibquant.backtest import backtest_equity
 from pyibquant.data.history import normalize_range
 from pyibquant.research import simple_returns, sma
@@ -20,6 +20,7 @@ assert 'ibapi' not in sys.modules
 assert 'pyarrow' not in sys.modules
 assert importlib.util.find_spec('pandas') is None, 'Base exports must work without pandas'
 assert 'pandas' not in sys.modules
+assert Option('demo', date(2026, 11, 20), 100, 'c').symbol == 'DEMO'
 resources = files('pyibquant')
 assert resources.joinpath('py.typed').is_file()
 assert resources.joinpath('visualization', 'chart.js').is_file()

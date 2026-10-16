@@ -23,11 +23,13 @@ Python exports, optional session enrichment, fixed historical ranges, dataset
 metadata and a returns/SMA research example are implemented and verified against
 TWS. Frozen dataset save/reload and explicit calendar/finality audits also work
 without a broker. A first daily equity backtest now simulates next-open execution,
-costs and performance from these frozen inputs. Next: stock/option quote access
-and an options research pilot, with user-controlled paper trading on the roadmap. Equities/ETFs are the initial workflow
+costs and performance from these frozen inputs. Level-one quote snapshots support
+stocks and explicit option selectors, with stock snapshots verified against TWS.
+Next: live option verification, contract discovery and selected quote collection;
+user-controlled paper trading remains on the roadmap. Equities/ETFs are the initial workflow
 for general users; options trading/backtesting is a major product direction and
-the project owner's primary personal interest. A focused stock/option quote and
-options research pilot follows the shared foundation, ahead of broad scanners or
+the project owner's primary personal interest. A focused options research pilot
+builds on the shared foundation, ahead of broad scanners or
 advanced chart-workspace features.
 The existing chart is an optional data/results viewer. Order placement, account
 state and broker-connected strategy execution are not implemented yet. See the project plan for
@@ -328,6 +330,79 @@ Optional `--calendar trading-dates.txt` uses one expected ISO date per line.
 The example writes `inputs.dataset.json`, `strategy.json`, `results.json` and
 CSV logs for fills, trades, equity and rejections under ignored `charts/backtest/`.
 No broker connection or optional dependency is needed.
+
+### Stock and option quote snapshots
+
+```python
+from datetime import date
+from pyibquant import Market, Option
+
+with Market.ibkr(timeout=30) as market:
+    stock = market.quote("AAPL")
+    option = market.quote(Option("AAPL", date(2026, 11, 20), 340, "C"))
+
+print(stock.bid, stock.ask, stock.spread, stock.market_data_type)
+print(option.instrument, option.greeks)
+record = option.to_dict()  # Independent JSON-compatible record after disconnect.
+```
+
+Choose a contract appropriate to your research and data permissions; the option
+above illustrates selector syntax. The option path has offline callback tests.
+The user-selected SPY 2026-11-20 770 C resolved successfully, but TWS returned
+error 10091 (additional API data permissions, SPY ARCA/TOP/ALL) and no bid/ask
+or Greeks. Live option BBO/Greeks verification remains pending. AAPL stock
+snapshot acquisition and feed-type confirmation passed against TWS on 2026-10-16.
+
+`Market.quote()` calls **`reqMktData(snapshot=True, regulatorySnapshot=False)`**,
+separately from historical bars. It returns one immutable `Quote` after
+`tickSnapshotEnd`; it is not a continuous subscription or an order-book request.
+Standard snapshots normally complete in about 11 seconds and return only fields
+available during the request, so use a longer connection timeout. See IBKR's
+[snapshot documentation](https://interactivebrokers.github.io/tws-api/md_request.html).
+Regulatory snapshots are never requested.
+
+Quotes contain resolved contract identity, bid/ask/last and sizes, requested and
+reported market-data type, per-field tick IDs and local UTC callback receipt
+times. Missing/nonpositive prices and unset values remain `None`; zero sizes
+remain zero. Receipt time is **not exchange quote time or proof of freshness**.
+Bid/ask callbacks arrive independently. Crossed values are preserved and flagged,
+with `spread`/`midpoint` left `None`; other incomplete pairs also have no spread.
+These fields do not certify an executable price or a consolidated order book.
+
+`market_data_type` accepts `live` (default), `frozen`, `delayed`, or
+`delayed_frozen`. Requested type is not a promise of the delivered feed: IBKR's
+callback reports the actual type, or it remains unknown. Delayed tick IDs are
+tracked separately, and `is_delayed` stays true even if they conflict with a live
+callback. Feed mismatches and partial entitlement messages appear in `warnings`;
+terminal permission errors/timeouts raise data errors. No mode change, subscription
+purchase or automatic retry is performed in response to a permission failure.
+See IBKR's [data-type definitions](https://www.interactivebrokers.com/docs/tws-api/doc/md/delayed-data).
+
+An `Option` requires underlying symbol, expiry date, strike and `C`/`P`. Optional
+`trading_class` and `multiplier` help disambiguate adjusted contracts. Exactly one
+IBKR contract must resolve; its conId, local symbol, trading class and actual
+multiplier are preserved. No multiplier of 100 is assumed. This initial path is
+US equity/ETF options routed via SMART in USD, not futures/index option coverage.
+
+Available option computations are preserved separately by `source` (`bid`, `ask`,
+`last`, `model`), with IV, delta, gamma, vega, theta, option/underlying prices and
+provider dividend estimate. Unavailable values stay `None`, delayed computations
+are marked, and missing computations are not manufactured. Availability depends
+on the broker's inputs and permissions; see IBKR's
+[option computations](https://interactivebrokers.github.io/tws-api/option_computations.html).
+Model values are not substituted for a missing bid/ask or a historical fill.
+
+```sh
+python examples/quote_snapshot.py AAPL --output charts/quotes/aapl.json
+python tests/live_quotes_check.py --symbol AAPL
+```
+
+Pass `--expiry YYYY-MM-DD --strike NUMBER --right C` (or P) to inspect an explicit
+option. Continuous quote subscriptions, chain discovery, chart bid/ask display,
+quote recording and historical quote imports remain future work. Snapshot calls
+serialize on a connection because IBKR's requested feed type is connection-wide;
+they do not hold the Market control lock while waiting. Disconnects fail the
+snapshot instead of silently repeating it. Historical bar recovery is unchanged.
 
 ### HTML snapshot
 

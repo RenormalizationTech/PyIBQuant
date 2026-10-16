@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ...bars import Bar, BarSeries
 from ...errors import CacheError, ConnectionError, DataError, HistoricalRangeError, RequestTimeout
+from ...quotes import DATA_TYPES, Option, Quote, QuoteInstrument, _number, _QuoteState
 from ..cache import HistoricalCache, Query
 from ..history import HistoryRange
 from ._pacing import HistoryPacer
@@ -102,6 +103,7 @@ class _Request:
     sessions: list[dict[str, Any]] = field(default_factory=list)
     regular_hours: bool = True
     initialized: bool = False
+    quote: _QuoteState | None = None
 
 
 def normalize_bar(raw: Any, interval: str) -> Bar:
@@ -177,6 +179,7 @@ class IBKRProvider(EWrapper, EClient):
         self.refresh_cache = refresh_cache
         self._pacer = HistoryPacer()
         self._pacing_stop = Event()
+        self._quote_lock = Lock()
 
     def new_connection(self) -> IBKRProvider:
         """Create a disconnected replacement retaining normalized yearly sources."""
@@ -270,6 +273,113 @@ class IBKRProvider(EWrapper, EClient):
             return request.contracts[0]
         finally:
             self._requests.pop(req_id, None)
+
+    def _resolve_option(self, option: Option) -> Any:
+        contract = Contract()
+        contract.symbol, contract.secType = option.symbol, "OPT"
+        contract.exchange, contract.currency = "SMART", "USD"
+        contract.lastTradeDateOrContractMonth = option.expiry.strftime("%Y%m%d")
+        contract.strike, contract.right = float(option.strike), option.right
+        contract.tradingClass = option.trading_class
+        if option.multiplier is not None:
+            contract.multiplier = f"{option.multiplier:g}"
+        req_id, request = self._new_request()
+        try:
+            self.reqContractDetails(req_id, contract)
+            self._wait(request)
+            if len(request.contracts) != 1:
+                raise DataError(f"Expected one option contract, got {len(request.contracts)}. "
+                                "Check expiry/strike/right and specify trading_class/multiplier "
+                                "to disambiguate adjusted contracts.")
+            return request.contracts[0]
+        finally:
+            self._requests.pop(req_id, None)
+
+    def quote(
+        self, symbol: str | Option, *, primary_exchange: str = "",
+        market_data_type: str = "live",
+    ) -> Quote:
+        """Collect one standard Level-one snapshot; never request a regulatory snapshot."""
+        if market_data_type not in DATA_TYPES:
+            raise ValueError(f"market_data_type must be one of {', '.join(DATA_TYPES)}")
+        if not isinstance(symbol, (str, Option)) or isinstance(symbol, str) and not symbol.strip():
+            raise ValueError("Quote requires a stock symbol or explicit Option selector")
+        if isinstance(symbol, Option) and primary_exchange:
+            raise ValueError("Option selectors use trading_class/multiplier, not primary_exchange")
+        # reqMarketDataType is connection-wide. Serialize snapshot lifetimes so
+        # concurrent callers cannot change another snapshot's requested mode.
+        with self._quote_lock:
+            option = isinstance(symbol, Option)
+            if isinstance(symbol, Option):
+                contract = self._resolve_option(symbol)
+            else:
+                contract = self._resolve(symbol.strip().upper(), primary_exchange)
+            if contract.secType != ("OPT" if option else "STK") or contract.conId <= 0:
+                raise DataError("IBKR returned an unexpected or unresolved quote contract")
+            instrument = QuoteInstrument(
+                contract.symbol, contract.conId, "option" if option else "equity",
+                contract.currency, contract.exchange, contract.primaryExchange,
+                contract.localSymbol, contract.tradingClass,
+                _number(contract.multiplier, allow_zero=False) if option else 1.0,
+                contract.lastTradeDateOrContractMonth if option else None,
+                float(contract.strike) if option else None, contract.right if option else None,
+            )
+            req_id, request = self._new_request()
+            request.quote = _QuoteState(instrument, market_data_type)
+            try:
+                self.reqMarketDataType(DATA_TYPES[market_data_type])
+                self.reqMktData(req_id, contract, "", True, False, [])
+                self._wait(request)
+                return request.quote.snapshot()
+            finally:
+                self._requests.pop(req_id, None)
+                if request.quote.completed_at is None and self.isConnected():
+                    self.cancelMktData(req_id)
+
+    def tickPrice(self, reqId: int, tickType: int, price: float, attrib: Any) -> None:
+        request = self._requests.get(reqId)
+        if request is not None and request.quote is not None:
+            request.quote.tick(tickType, price)
+
+    def tickSize(self, reqId: int, tickType: int, size: Any) -> None:
+        request = self._requests.get(reqId)
+        if request is not None and request.quote is not None:
+            request.quote.tick(tickType, size, size=True)
+
+    def marketDataType(self, reqId: int, marketDataType: int) -> None:
+        request = self._requests.get(reqId)
+        if request is not None and request.quote is not None:
+            state = request.quote
+            with state.lock:
+                if state.completed_at is not None:
+                    return
+                actual = {value: key for key, value in DATA_TYPES.items()}.get(marketDataType)
+                if state.actual_type is not None and actual != state.actual_type:
+                    state.values.clear()
+                    state.receipts.clear()
+                    state.tick_types.clear()
+                    state.greeks.clear()
+                    state.delayed = False
+                    state.warnings.append("Market data type changed; earlier fields discarded.")
+                state.actual_type = actual
+
+    def tickOptionComputation(
+        self, reqId: int, tickType: int, tickAttrib: int, impliedVol: float,
+        delta: float, optPrice: float, pvDividend: float, gamma: float, vega: float,
+        theta: float, undPrice: float,
+    ) -> None:
+        request = self._requests.get(reqId)
+        if request is not None and request.quote is not None:
+            request.quote.computation(tickType, (impliedVol, delta, optPrice, pvDividend,
+                                                 gamma, vega, theta, undPrice))
+
+    def tickSnapshotEnd(self, reqId: int) -> None:
+        request = self._requests.get(reqId)
+        if request is not None and request.quote is not None:
+            with request.quote.lock:
+                if request.quote.completed_at is None:
+                    request.quote.completed_at = datetime.now(UTC)
+                request.done.set()
 
     def bars(
         self,
@@ -714,9 +824,16 @@ class IBKRProvider(EWrapper, EClient):
         ):
             request.done.set()
             return
+        if request.quote is not None and errorCode in {10090, 10091, 10167}:
+            with request.quote.lock:
+                request.quote.warnings.append(message)
+            return
         if errorCode in {2174, 2176, 2188, 10167}:
             if request.series is not None:
                 request.series.warnings.append(message)
+            if request.quote is not None:
+                with request.quote.lock:
+                    request.quote.warnings.append(message)
             return
         request.error = DataError(message)
         if request.series is not None:
@@ -755,6 +872,9 @@ class IBKRProvider(EWrapper, EClient):
         for req_id, request in list(self._requests.items()):
             if request.series is not None and request.series.live and self.isConnected():
                 self.cancelHistoricalData(req_id)
+            if (request.quote is not None and request.quote.completed_at is None
+                    and self.isConnected()):
+                self.cancelMktData(req_id)
         self.disconnect()
         self._fail_pending(ConnectionError("Market connection closed"))
         if self._thread is not None:

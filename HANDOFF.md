@@ -2,8 +2,8 @@
 
 Checkpoint: 2026-10-16. This document records the chart-foundations implementation
 and local validation. Snapshot commit e42aede records the session/recovery/research
-and frozen-dataset foundations. The daily backtest follow-up is in the working
-tree; no push or release was performed. Start with `git status` and `git log -1` after transferring work.
+and frozen-dataset foundations. Commit 95fbdaf records the daily equity backtest.
+The quote snapshot follow-up is recorded below; no push or release was performed. Start with `git status` and `git log -1` after transferring work.
 
 ## Where to resume
 
@@ -21,7 +21,7 @@ are now implemented. Fixed historical ranges, basic dataset metadata, simple
 returns/SMA and a research example have since been added with offline and live TWS
 verification. Frozen dataset reload and explicit calendar/finality comparisons are
 also implemented. The first daily equity backtest now works offline. Next:
-stock/option quote access and an options research pilot. Charts are supporting inspection tools. Saved chart workspaces
+live option snapshot verification, discovery and selected quote collection. Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
 Audience priority: equities/ETFs are the general-user entry point; options
@@ -204,8 +204,43 @@ There is no order placement or broker-connected strategy loop.
 `research.above_sma` and `research.sma_crossover` provide trailing-only signals;
 `examples/backtest_equity.py` runs either offline and saves inputs, strategy,
 JSON results and CSV logs. Defaults are explicit simulation inputs, not IBKR fees.
-The next implementation priority is the stock/option quote API and options pilot.
+The next implementation priority is the options pilot; quote snapshots below
+are the first implemented step.
 Optional result charts and paper execution controls remain planned.
+
+## Level-one quote snapshots (2026-10-16)
+
+`Market.quote(symbol_or_Option, market_data_type="live")` resolves one US stock or
+explicit equity/ETF option contract and calls reqMktData with snapshot=True and
+regulatorySnapshot=False. It waits for tickSnapshotEnd, returns a frozen Quote,
+and never uses bar history, requests orders, or purchases regulatory snapshots.
+Snapshot completion normally takes about 11 seconds; default timeout is 30.
+
+Bid/ask/last, sizes, conId/local symbol/trading class/actual multiplier, requested
+and reported feed type, delayed tick IDs and local callback receipt times are
+preserved. Receipt timestamps do not establish exchange quote age. Missing or
+nonpositive/unset prices are None, zero sizes stay zero. Crossed pairs remain
+visible with no midpoint/spread. Delayed tick flags override any assumption of
+live data. Available bid/ask/last/model IV/Greeks are separate; missing model
+values are never manufactured. Partial permission messages are warnings; terminal
+errors/timeouts fail and clean up the quote request. Snapshot lifetimes serialize
+because reqMarketDataType is connection-wide, without holding Market's control
+lock. Disconnects fail rather than silently reissue snapshots.
+
+`Option(symbol, expiry_date, strike, "C"/"P", trading_class="", multiplier=None)`
+resolves exactly one contract via SMART/USD. No multiplier is assumed. There is
+no chain discovery or future/index-option coverage. `examples/quote_snapshot.py`
+prints or saves JSON after disconnecting; `tests/live_quotes_check.py` checks the
+real data-only callback path. Stock verification passed. The user selected SPY,
+2026-11-20, 770, C. Contract resolution passed: conId 882135148, trading class
+SPY, local symbol SPY   261120C00770000, multiplier 100. The snapshot ended with
+no bid/ask/Greeks and zero sizes; TWS returned 10091 naming SPY ARCA/TOP/ALL
+(additional API market-data permissions). Feed type callback was live; that does
+not establish field availability. Asked whether to test delayed mode or let the
+user check TWS permissions before retrying live. Do not buy subscriptions, change
+account settings or silently relabel the empty quote as verified live BBO.
+Continuous subscriptions, chart bid/ask display, recording and historical option
+imports remain planned. See README for exact limits and IBKR source links.
 
 ## What exists
 
@@ -215,6 +250,11 @@ Optional result charts and paper execution controls remain planned.
 | `src/pyibquant/data/providers/ibkr.py` | Official SDK callbacks, contracts, requests, normalization, cancellation |
 | `src/pyibquant/data/cache.py` | Optional exact-query Parquet cache, expiry, inspection and clearing |
 | `src/pyibquant/bars.py` | Immutable Bar values and mutable thread-protected BarSeries snapshots |
+| `src/pyibquant/quotes.py` | SDK-free option selectors, quote/Greek values and callback normalization |
+| `examples/quote_snapshot.py` | Stock/explicit-option snapshot inspection and JSON export |
+| `tests/test_quotes.py` | Quote SDK callback, entitlement, cleanup and control responsiveness tests |
+| `tests/test_quote_core.py` | SDK-free quote normalization, immutability and example checks |
+| `tests/live_quotes_check.py` | Explicit standard quote snapshot integration check |
 | `src/pyibquant/backtest.py` | Daily equity simulation, timing/cost assumptions and frozen results |
 | `examples/backtest_equity.py` | Offline above-SMA/crossover runs with reproducible inputs and JSON/CSV results |
 | `tests/test_backtest.py` | Hand-calculated accounting, cash rejection, finality/calendar checks and prefix causality |
@@ -371,6 +411,19 @@ python tests/browser_controls_check.py
 
 ## Validation recorded at this checkpoint
 
+Level-one snapshot follow-up (2026-10-16): 231 unit tests, Ruff and mypy
+(18 source files) pass. The bare installed wheel passes SDK-free smoke checks;
+the installed-wheel subset without ibapi/pandas passes 98 tests, with six pandas
+checks skipped. Offline tests cover stock/option resolution, actual multiplier, feed-type transitions and delayed tick IDs,
+missing/unset/crossed quotes, separate Greek sources and unavailable sentinels,
+timeouts/permissions/disconnect cleanup, Market control responsiveness, immutable
+JSON export and standalone examples. The actual AAPL standard snapshot passed on
+port 7497/client 193: bid/ask/sizes arrived and IBKR reported live feed type.
+The selected SPY option resolved but returned no bid/ask/Greeks with 10091;
+that specific empty snapshot/partial-permission combination has a regression test.
+Generated quote records are ignored under charts/quote-check/. Live option BBO and
+Greeks remain unverified until the data-mode/permission issue is resolved.
+
 Daily equity backtest follow-up (2026-10-16): 199 unit tests, Ruff and mypy pass.
 Hand-calculated tests cover delayed signal execution, adverse slippage, per-fill
 fees, realized/unrealized P&L, equity returns/drawdown, ending positions, rejected
@@ -517,7 +570,9 @@ counts and chart screenshots are local artifacts, not fixtures or release data.
 - Reconnect needs TWS login/API settings and the configured port to remain valid;
   provider history limits can prevent recovery of very long gaps.
 - Exact-query cache only; no coverage merging, automatic pruning or disk-size limit.
-- US stock/ETF TRADES bars only. No delayed-data fallback or tick-level quotes.
+- Historical bars are US stock/ETF TRADES only, with no delayed-history fallback.
+- Quote snapshots support US stocks/explicit equity options and explicit feed modes;
+  continuous quotes, depth, chart bid/ask display and historical quote imports are not implemented.
 - IBKR limits/entitlements apply; fixed ranges page automatically, legacy lookbacks remain single requests.
 - Live bars remain in memory without a retention limit; full snapshots are polled/redrawn.
 - A selection temporarily creates the replacement subscription before releasing the old one.
