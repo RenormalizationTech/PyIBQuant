@@ -290,6 +290,13 @@ def main() -> None:
                 ) == expected
             assert page.evaluate("chart.timeLabel('2026-01-01', true)") == "Jan 1, 2026"
             page.evaluate("window.savedBars = chart.bars.map(bar => ({...bar}))")
+            # Missing option quote-bar volume must not hide price candles or show zero volume.
+            page.evaluate("chart.setData(savedBars.map(bar => ({...bar, volume: null})))")
+            page.wait_for_function("chart.frame === null")
+            assert "Vol —" in page.locator("#legend").inner_text()
+            assert page.evaluate("Number.isFinite(chart.priceRange.high)")
+            page.evaluate("chart.setData(savedBars)")
+            page.wait_for_function("chart.frame === null")
             assert page.locator("canvas").count() == 1
             assert page.evaluate(
                 "chart.canvas.width === Math.round(chart.width * devicePixelRatio)"

@@ -10,7 +10,10 @@ and external data providers are not required workflows. The obsolete recording,
 rotation/replay stack and recorded-quote simulator were removed. Discovery,
 snapshots, independent streams/reconnect and the equity
 research/backtest workflow remain. Cleanup validation: 261 tests, Ruff, mypy and
-an SDK-free wheel smoke check pass. Option historical acquisition is next.
+an SDK-free wheel smoke check passed at cleanup. Option historical acquisition is now
+implemented: 289 tests, Ruff, mypy and the offline Chrome regression pass.
+After-hours TWS checks returned 78 bars per source for one completed AAPL option
+session, with cache reuse and broker-free research verified.
 
 ## Goal and scope
 
@@ -42,15 +45,15 @@ bounded to a selected contract and requested range, with optional cache/save for
 repeatability. The recorded-quote experiment was removed; the primary product
 data model uses on-demand IBKR historical inputs.
 
-## Next — On-demand IBKR option history
+## Option history delivered; next — historical-bar backtesting
 
-- [ ] Resolve one explicit unexpired option selector and retain exact identity/multiplier
-- [ ] Add intraday historical requests with fixed start/end bounds and explicit TRADES/MIDPOINT/BID/ASK types
-- [ ] Reuse paging/pacing and query-specific caching without stock-only identity or adjustment assumptions
-- [ ] Preserve contract selector, source type, requested range and coverage in saved research metadata
-- [ ] Surface expired/unavailable history and permission failures explicitly; no fallback to live recording or fabricated data
-- [ ] Verify a small recent historical request against TWS, including when the exchange is closed
-- [ ] Provide an offline research example from the returned historical input
+- [x] Resolve one explicit unexpired option selector and retain exact identity/multiplier
+- [x] Add intraday historical requests with fixed start/end bounds and explicit TRADES/MIDPOINT/BID/ASK types
+- [x] Reuse paging/pacing and query-specific caching without stock-only identity or adjustment assumptions
+- [x] Preserve contract selector, source type, requested range and coverage in saved research metadata
+- [x] Surface expired/unavailable history and permission failures explicitly; no fallback to live recording or fabricated data
+- [x] Verify a small recent historical request against TWS, including when the exchange is closed
+- [x] Provide an offline research example from the returned historical input
 - [ ] Add a historical-bar option backtest with explicit timing/cost assumptions appropriate to the input bars
 - [ ] Expand research/performance analytics and a reproducible research-to-backtest report
 
@@ -89,8 +92,8 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
 
 Equity backtesting remains implemented and verified. The recorded-quote options
-experiment was removed during scope cleanup; historical option acquisition and
-historical-bar option simulation are the next slices. Keep paper execution separate.
+experiment was removed during scope cleanup; historical option acquisition is implemented;
+historical-bar option simulation is next. Keep paper execution separate.
 
 ## Stock/option quote foundation
 

@@ -110,7 +110,7 @@ class _Request:
     chain_groups: dict[tuple[str, str, float], OptionChainGroup] = field(default_factory=dict)
 
 
-def normalize_bar(raw: Any, interval: str) -> Bar:
+def normalize_bar(raw: Any, interval: str, *, volume_available: bool = True) -> Bar:
     """formatDate=2 gives epoch seconds intraday, dates for daily/coarser bars."""
     timestamp = (
         datetime.strptime(str(raw.date), "%Y%m%d").date()
@@ -127,7 +127,7 @@ def normalize_bar(raw: Any, interval: str) -> Bar:
         float(raw.high),
         float(raw.low),
         float(raw.close),
-        max(0.0, float(raw.volume)),
+        max(0.0, float(raw.volume)) if volume_available else None,
     )
 
 
@@ -538,7 +538,7 @@ class IBKRProvider(EWrapper, EClient):
 
     def bars(
         self,
-        symbol: str,
+        symbol: str | Option,
         *,
         interval: str = "1min",
         duration: str = "1 D",
@@ -546,13 +546,15 @@ class IBKRProvider(EWrapper, EClient):
         regular_hours: bool = True,
         primary_exchange: str = "",
         refresh: bool = False,
+        data_type: str = "TRADES",
         _end: datetime | date | None = None,
         _allow_empty: bool = False,
         _contract: Any | None = None,
     ) -> BarSeries:
-        symbol = symbol.strip().upper()
-        if not symbol or interval not in INTERVALS:
-            raise ValueError(f"Provide a symbol and an interval from {', '.join(INTERVALS)}")
+        selector = symbol
+        symbol = self._history_symbol(selector, interval, data_type, primary_exchange)
+        if isinstance(selector, Option) and (_end is None or live):
+            raise ValueError('Option history requires fixed bounds and live=False')
         duration = re.sub(r"\s+", "", duration.upper())
         if not re.fullmatch(r"[1-9]\d*[SDWMY]", duration):
             raise ValueError("duration must look like '1 D', '2 W', or '6 M'")
@@ -568,7 +570,10 @@ class IBKRProvider(EWrapper, EClient):
             else:
                 ending = datetime.combine(_end, time.min, ZoneInfo("America/New_York"))
             end = ending.astimezone(UTC).strftime("%Y%m%d %H:%M:%S UTC")
-        contract = self._resolve(symbol, primary_exchange) if _contract is None else _contract
+        contract = _contract
+        if contract is None:
+            contract = (self._resolve_option(selector) if isinstance(selector, Option)
+                        else self._resolve(symbol, primary_exchange))
         source_duration = duration
         start_date = None
         if interval in {"1w", "1y"}:
@@ -581,7 +586,7 @@ class IBKRProvider(EWrapper, EClient):
         series.duration = duration
         series.regular_hours = regular_hours
         series.primary_exchange = primary_exchange
-        self._set_identity(series, contract)
+        self._set_identity(series, contract, selector=selector, data_type=data_type)
         if interval == "1y":
             series.warnings.append(
                 "Yearly candles combine IBKR monthly bars by calendar year. "
@@ -598,11 +603,13 @@ class IBKRProvider(EWrapper, EClient):
             "duration": duration,
             "end": end,
             "regular_hours": regular_hours,
-            "data_type": "TRADES",
+            "data_type": data_type,
             "normalization": 2 if interval in {"1w", "1y"} else 1,
             "source_duration": source_duration,
             "start": start_date.isoformat() if start_date else "",
         }
+        if isinstance(selector, Option):
+            query = {**query, 'asset_type': 'option', 'normalization': 3}
         if self.cache is not None and not live and not (refresh or self.refresh_cache):
             try:
                 cached = self.cache.get(query)
@@ -635,7 +642,7 @@ class IBKRProvider(EWrapper, EClient):
                 end,
                 source_duration,
                 INTERVALS[interval],
-                "TRADES",
+                data_type,
                 int(regular_hours),
                 2,
                 live,
@@ -670,11 +677,11 @@ class IBKRProvider(EWrapper, EClient):
                 self._requests.pop(req_id, None)
 
     def bars_range(
-        self, symbol: str, *, interval: str, bounds: HistoryRange,
+        self, symbol: str | Option, *, interval: str, bounds: HistoryRange,
         regular_hours: bool = True, primary_exchange: str = "", refresh: bool = False,
+        data_type: str = "TRADES",
     ) -> BarSeries:
-        if interval not in INTERVALS or not symbol.strip():
-            raise ValueError("Provide a symbol and a supported bar interval")
+        name = self._history_symbol(symbol, interval, data_type, primary_exchange)
         now = datetime.fromtimestamp(current_time(), UTC)
         ending = (
             bounds.end if isinstance(bounds.end, datetime)
@@ -682,7 +689,7 @@ class IBKRProvider(EWrapper, EClient):
         )
         if ending > now:
             raise ValueError("A fixed historical range cannot end in the future")
-        result = BarSeries(symbol.strip().upper(), interval)
+        result = BarSeries(name, interval)
         result.regular_hours = regular_hours
         result.primary_exchange = primary_exchange
         result.requested_start, result.requested_end = bounds.start, bounds.end
@@ -698,13 +705,18 @@ class IBKRProvider(EWrapper, EClient):
             lower = max(bounds.start, range_page_start(cursor, interval))
             try:
                 if contract is None:
-                    contract = self._resolve(symbol.strip().upper(), primary_exchange)
-                    self._set_identity(result, contract)
+                    contract = (self._resolve_option(symbol) if isinstance(symbol, Option)
+                                else self._resolve(name, primary_exchange))
+                    self._set_identity(result, contract, selector=symbol, data_type=data_type)
+                extra: dict[str, Any] = (
+                    {'data_type': data_type} if isinstance(symbol, Option) else {}
+                )
                 page = self.bars(
                     symbol, interval=interval, duration=range_duration(lower, cursor, interval),
                     regular_hours=regular_hours, primary_exchange=primary_exchange,
                     refresh=refresh, _end=cursor, _allow_empty=True,
                     _contract=contract,
+                    **extra,
                 )
             except (ConnectionError, DataError, OSError) as exc:
                 result.status = "Historical range incomplete"
@@ -740,7 +752,57 @@ class IBKRProvider(EWrapper, EClient):
         return result
 
     @staticmethod
-    def _set_identity(series: BarSeries, contract: Any) -> None:
+    def _history_symbol(
+        selector: str | Option, interval: str, data_type: str, primary_exchange: str,
+    ) -> str:
+        if interval not in INTERVALS:
+            raise ValueError('Provide a supported bar interval')
+        if isinstance(selector, Option):
+            if interval in {'1d', '1w', '1y'} or primary_exchange:
+                raise ValueError('Option history is intraday; use trading_class/multiplier '
+                                 'instead of primary_exchange')
+            if data_type not in {'TRADES', 'MIDPOINT', 'BID', 'ASK'}:
+                raise ValueError('Option data_type must be TRADES, MIDPOINT, BID or ASK')
+            today = datetime.fromtimestamp(current_time(), ZoneInfo('America/New_York')).date()
+            if selector.expiry < today:
+                raise DataError('IBKR historical data is unavailable for expired options')
+            return selector.symbol
+        if not isinstance(selector, str) or not selector.strip():
+            raise ValueError('Provide a stock symbol or explicit Option selector')
+        if data_type != 'TRADES':
+            raise ValueError('Equity history currently supports data_type=TRADES only')
+        return selector.strip().upper()
+
+    def _set_identity(
+        self, series: BarSeries, contract: Any, *, selector: str | Option | None = None,
+        data_type: str = 'TRADES',
+    ) -> None:
+        if isinstance(selector, Option):
+            instrument = self._quote_instrument(contract, True)
+            if (instrument.multiplier is None or instrument.symbol != selector.symbol
+                    or instrument.currency != 'USD'
+                    or (instrument.expiry or '')[:8] != selector.expiry.strftime('%Y%m%d')
+                    or instrument.strike != selector.strike or instrument.right != selector.right
+                    or selector.trading_class and instrument.trading_class != selector.trading_class
+                    or (selector.multiplier is not None
+                        and instrument.multiplier != selector.multiplier)):
+                raise DataError('Resolved option history contract does not match the selector '
+                                'or has an unavailable multiplier')
+            series.instrument_id = instrument.instrument_id
+            series.currency, series.exchange = instrument.currency, instrument.exchange
+            series.primary_exchange = instrument.primary_exchange
+            series.asset_type, series.multiplier = 'option', instrument.multiplier
+            series.data_type, series.adjustment = data_type, 'not_verified'
+            series.session_timezone = 'America/New_York'
+            series.option_metadata = dict(
+                expiry=instrument.expiry, strike=instrument.strike, right=instrument.right,
+                trading_class=instrument.trading_class, local_symbol=instrument.local_symbol,
+                requested=dict(symbol=selector.symbol, expiry=selector.expiry.isoformat(),
+                               strike=selector.strike, right=selector.right,
+                               trading_class=selector.trading_class,
+                               multiplier=selector.multiplier),
+            )
+            return
         series.instrument_id = int(contract.conId)
         series.currency, series.exchange = str(contract.currency), str(contract.exchange)
         series.primary_exchange = str(contract.primaryExchange)
@@ -751,13 +813,15 @@ class IBKRProvider(EWrapper, EClient):
     @staticmethod
     def _year_bar(monthly: dict[date, Bar], year: int) -> Bar:
         months = [value for stamp, value in sorted(monthly.items()) if stamp.year == year]
+        if any(month.volume is None for month in months):
+            raise DataError('Monthly volume is unavailable for yearly aggregation')
         return Bar(
             date(year, 1, 1),
             months[0].open,
             max(month.high for month in months),
             min(month.low for month in months),
             months[-1].close,
-            sum(month.volume for month in months),
+            sum(month.volume for month in months if month.volume is not None),
         )
 
     def load_older(self, series: BarSeries, *, refresh: bool = False) -> int:
@@ -849,7 +913,10 @@ class IBKRProvider(EWrapper, EClient):
         if request is None or request.series is None:
             return
         try:
-            normalized = normalize_bar(bar, request.series.interval)
+            normalized = normalize_bar(
+                bar, request.series.interval,
+                volume_available=request.series.data_type not in {'MIDPOINT', 'BID', 'ASK'},
+            )
             if request.start_date is not None and normalized.timestamp < request.start_date:
                 return
             if request.series.interval == "1y":

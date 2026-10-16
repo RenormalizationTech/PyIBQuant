@@ -202,7 +202,8 @@ def backtest_equity(
     if bars[-1].timestamp > finalized_through:
         raise ValueError('All input bars must be confirmed final through finalized_through')
     for bar in bars:
-        if (min(bar.open, bar.high, bar.low, bar.close) <= 0 or bar.volume < 0
+        if (min(bar.open, bar.high, bar.low, bar.close) <= 0
+                or bar.volume is None or bar.volume < 0
                 or bar.low > min(bar.open, bar.close) or bar.high < max(bar.open, bar.close)):
             raise ValueError('Backtest requires positive, consistent OHLC prices '
                              'and nonnegative volume')

@@ -152,10 +152,10 @@ class BarDataset:
             if digest != document["sha256"]:
                 raise ValueError("Dataset integrity check failed")
             metadata = payload["metadata"]
-            columns = ("open", "high", "low", "close", "volume")
             bars = tuple(
                 Bar(_stamp(row["timestamp"], metadata["timestamp_kind"]),
-                    *(float(row[key]) for key in columns))
+                    float(row['open']), float(row['high']), float(row['low']), float(row['close']),
+                    None if row['volume'] is None else float(row['volume']))
                 for row in payload["bars"]
             )
             return cls._create(bars, metadata)

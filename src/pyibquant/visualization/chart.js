@@ -456,6 +456,7 @@ class MarketChart {
     ctx.beginPath(); ctx.rect(plot.x, volumeTop, plot.w, volumeHeight); ctx.clip();
     for (let index = first; index < last; index++) {
       const bar = this.bars[index];
+      if (bar.volume == null) continue;
       const px = x(index);
       ctx.fillStyle = bar.close >= bar.open ? colors.up : colors.down;
       const vh = bar.volume / volumeMax * volumeHeight;
@@ -483,7 +484,7 @@ class MarketChart {
       this.label(value, plot.x + plot.w, hover.y - 11, '#33465d');
       if (selected) this.label(this.timeLabel(selected.time, true), px, bottom + 5, '#33465d', '#e1e8f0', 'center');
     }
-    this.legend.textContent = selected ? `${this.timeLabel(selected.time, true)}   O ${this.number.format(selected.open)}   H ${this.number.format(selected.high)}   L ${this.number.format(selected.low)}   C ${this.number.format(selected.close)}   Vol ${this.number.format(selected.volume)}` : 'No bar at this position';
+    this.legend.textContent = selected ? `${this.timeLabel(selected.time, true)}   O ${this.number.format(selected.open)}   H ${this.number.format(selected.high)}   L ${this.number.format(selected.low)}   C ${this.number.format(selected.close)}   Vol ${selected.volume == null ? '—' : this.number.format(selected.volume)}` : 'No bar at this position';
   }
 }
 

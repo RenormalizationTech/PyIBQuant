@@ -37,8 +37,10 @@ feed verification and frozen AAPL option bid/ask/model IV/Greeks verified agains
 TWS. Grouped option discovery and independently owned quote streams with opt-in
 reconnect are implemented and verified with frozen AAPL data.
 The recorded-quote options experiment and its recording/replay infrastructure have
-been removed to keep the software focused on on-demand IBKR history. Next:
-selected-option historical acquisition, research and a historical-bar backtest.
+been removed to keep the software focused on on-demand IBKR history. Selected-option
+intraday history and saved-input returns/SMA research are now implemented and
+verified against TWS after exchange hours. Next: a historical-bar option backtest
+and broader research/performance analytics.
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
@@ -106,10 +108,11 @@ historical data on demand from IBKR, just as equities do. Do not require live
 recording, large-scale collection or an external historical provider. Existing
 stock/option snapshots and independent streaming remain supporting capabilities; their further scaling and live checks do not gate research.
 
-The next slice is explicit-contract intraday option history with bounded queries,
-price-data type, preserved contract identity/multiplier and honest availability.
-Reuse the existing historical downloader where appropriate, then build financial
-research and a bar-based options backtest with explicit execution assumptions.
+Explicit-contract intraday option history now supports bounded queries, all four
+TRADES/MIDPOINT/BID/ASK sources, exact identity/multiplier, caching and saved-input
+returns/SMA research. After-hours TWS validation passed for one completed AAPL
+option session. Next build financial research and a bar-based options backtest
+with explicit execution assumptions.
 The removed recorded-quote simulator is not the historical backtest model; do not
 invent sizes/Greeks/receipt timestamps for historical bars. Current chain discovery is not a historical
 point-in-time chain. Expired options and option EOD history are outside IBKR's
@@ -1495,15 +1498,18 @@ receipt-based option simulation and their dedicated examples/tests. These were a
 experimental branch of the workflow; Git commit `59da0e5` preserves the source.
 Their generated recording/test datasets were removed during scope cleanup.
 
-Next: request one selected unexpired option's available intraday historical bars
-on demand from IBKR. Preserve exact contract identity/multiplier, source type,
-range/coverage and query-specific caching. Reuse historical paging/pacing without
-stock-only assumptions, and verify a small request against TWS. Add financial
-research calculations and a historical-bar options backtest with explicit
-execution/cost assumptions. No live recorder or huge local collection is required.
+Implemented: selected unexpired option intraday history via `Market.bars(Option(...),
+start=..., end=..., data_type=...)`, preserving exact identity/multiplier, source,
+range/coverage and query-specific caching. Shared paging/pacing remains bounded.
+BID/ASK/MIDPOINT volume stays unavailable rather than becoming zero. Saved datasets
+feed broker-independent returns/SMA research. After-hours TWS checks on 2026-10-16
+returned 78 five-minute bars per source for AAPL 2026-11-20 340 C; cache reuse and
+offline reload passed. Local checks: 289 tests, Ruff, mypy and Chrome regression.
 
-The current source does not yet implement historical option requests or an option
-backtest. IBKR's history limitations define the scope; expired-option history,
+Next: a historical-bar options backtest with explicit timing, execution and cost
+assumptions, followed by broader financial research/performance reports. No live
+recorder or huge local collection is required. The option backtest is not yet
+implemented. IBKR's history limitations define scope; expired-option history,
 option EOD history, historical chain reconstruction and contract Greeks are not
 promised. Paper execution, exercise/assignment, multi-leg models and broad surfaces
 remain later work driven by supported research requirements.

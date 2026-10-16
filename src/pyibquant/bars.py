@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import os
 from collections.abc import Iterable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from math import isfinite
@@ -30,14 +31,14 @@ class Bar:
     high: float
     low: float
     close: float
-    volume: float
+    volume: float | None
 
     def __post_init__(self) -> None:
         if isinstance(self.timestamp, datetime) and self.timestamp.utcoffset() is None:
             raise ValueError("Intraday timestamps must be timezone-aware")
         if not all(
-            isfinite(value) for value in (self.open, self.high, self.low, self.close, self.volume)
-        ):
+            isfinite(value) for value in (self.open, self.high, self.low, self.close)
+        ) or self.volume is not None and not isfinite(self.volume):
             raise ValueError("OHLCV values must be finite")
 
     def chart_data(self) -> dict[str, Any]:
@@ -69,6 +70,7 @@ class BarSeries:
         self.currency: str | None = None
         self.exchange: str | None = None
         self.multiplier: float | None = None
+        self.option_metadata: dict[str, Any] | None = None
         self.data_type: str | None = None
         self.adjustment: str | None = None
         self.session_timezone: str | None = None
@@ -183,7 +185,7 @@ class BarSeries:
             bars = self.snapshot()
             date_only = self.interval in {"1d", "1w", "1y"}
             fixed = self.requested_start is not None
-            return dict(
+            result = dict(
                 schema_version=1, provider=self.provider, symbol=self.symbol,
                 instrument_id=self.instrument_id, asset_type=self.asset_type,
                 currency=self.currency, exchange=self.exchange,
@@ -217,6 +219,10 @@ class BarSeries:
                 schedule_error=self.schedule_error,
                 warnings=list(self.warnings),
             )
+            if self.option_metadata is not None:
+                result['option'] = deepcopy(self.option_metadata)
+                result['volume_available'] = self.data_type == 'TRADES'
+            return result
 
     def payload(self) -> dict[str, Any]:
         with self._lock:

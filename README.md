@@ -28,18 +28,15 @@ external historical-data providers are outside the current scope.
 
 Equity/ETF historical queries, paging/pacing, exports, frozen datasets and simple
 returns/SMA research are implemented, together with a first daily equity backtest.
-Option discovery, snapshots and independent quote streams/reconnect are also
-implemented. The superseded recording/replay stack and recorded-quote option
-simulator have been removed. Historical option acquisition and a historical-bar
-option backtest remain the next implementation tasks; paper execution comes later.
+Option discovery, snapshots, independent quote streams/reconnect and bounded
+intraday option history are implemented. `Market.bars(Option(...), start=..., end=...,
+data_type=...)` reuses historical paging, pacing and optional exact-query caching.
+The superseded recording/replay stack and recorded-quote simulator were removed.
 
-**Next:** extend historical acquisition to explicitly selected option contracts,
-with a short intraday interval, fixed start/end bounds and explicit price-data type
-(TRADES, MIDPOINT, BID or ASK). Reuse the downloader's pacing, range handling and
-metadata where appropriate, without assuming stock identity or multiplier one.
-This option-history API and a historical-bar options simulator are not implemented
-yet. Historical bars must not be relabeled as live quote recordings or supplied
-with invented receipt times, quote sizes or Greeks.
+**Next:** build a historical-bar option backtest with explicit signal timing,
+fill and cost assumptions, then expand financial research/performance analytics.
+Paper execution comes later. Historical bars do not supply quote receipt times,
+quote sizes or historical Greeks.
 
 The scope follows IBKR's available history. IBKR lists expired-option history and
 option end-of-day data as unavailable in its historical API; see
@@ -50,7 +47,7 @@ have different meanings; IBKR's BID_ASK candle also uses special aggregates rath
 than ordinary trade OHLC. See [bar definitions](https://www.interactivebrokers.com/docs/tws-api/doc/md/historical-bars).
 Missing history and permission failures must remain explicit. Historical requests
 use a logged-in TWS/Gateway and appropriate permissions; live recording and an
-open trading session are not requirements for the planned historical workflow.
+open trading session are not requirements for historical acquisition.
 
 Charts are optional data/results viewers. Order placement, account state and
 broker-connected strategy execution remain planned. Options research/backtesting
@@ -151,8 +148,58 @@ The frame has a `timestamp` index and float64 `open`, `high`, `low`, `close`, an
 frames retain Python dates in their index. Empty frames keep the column schema.
 Pandas is imported only when `to_dataframe()` is called. CSV contains OHLCV only;
 `bars.metadata()` provides separate JSON-compatible instrument/query metadata to
-save alongside it. Dataset reload APIs remain future work.
+save alongside it. `BarDataset` saves/reloads both bars and metadata (see below).
 See `examples/research_exports.py` for a runnable local example.
+
+### Selected-option historical research
+
+```python
+from datetime import date
+from pyibquant import Market, Option, BarDataset
+
+option = Option("AAPL", date(2026, 11, 20), 340, "C", trading_class="AAPL", multiplier=100)
+with Market.ibkr() as market:
+    bars = market.bars(
+        option, interval="5min", data_type="MIDPOINT",
+        start="2026-10-16T09:30:00-04:00", end="2026-10-16T16:00:00-04:00",
+    )
+BarDataset.from_series(bars).save("charts/option-history/bars.dataset.json")
+```
+
+Choose a currently unexpired contract and completed range when running this
+example. Options require fixed start/end bounds and an intraday interval (`30s`,
+`1min`, `5min`, `15min`, `30min`, `1h`, `2h`, `4h`). `data_type` is `TRADES` (the
+API default), `MIDPOINT`, `BID` or `ASK`. `live`, `duration`, `include_sessions`
+and `primary_exchange` are unsupported for option history. Use the selector's
+trading class/multiplier to disambiguate adjusted contracts; no multiplier is assumed.
+
+BID/ASK/MIDPOINT volume is unavailable: Python records contain `None`, CSV leaves
+it blank, datasets preserve JSON null and pandas represents it as NaN. These bars
+are descriptive price aggregates; a midpoint close is not an executable fill.
+Metadata retains resolved conId, expiry/strike/right, trading class, actual
+multiplier, requested selector, price source and range/coverage. Option adjustment
+and bar finality remain explicitly unverified. Completed paging does not certify
+absence of gaps. Empty windows and broker errors remain visible; the research
+example refuses empty or incomplete downloads. `market.serve()` shows option
+history without stock reload/session controls; `bars.plot()` also works offline.
+
+```sh
+python examples/research_option_history.py AAPL \
+  --expiry 2026-11-20 --strike 340 --right C --trading-class AAPL --multiplier 100 \
+  --start 2026-10-16T09:30:00-04:00 --end 2026-10-16T16:00:00-04:00 \
+  --data-type MIDPOINT --output-dir charts/option-history
+python examples/research_saved.py charts/option-history/bars.dataset.json
+```
+
+The first command downloads and saves bars, metadata and returns/SMA signals. The
+second recomputes research offline without TWS or the SDK. The example defaults
+to MIDPOINT; pass `--data-type` explicitly for other sources. `--cache-dir` enables
+the optional Parquet cache. No continuous collection is required.
+
+After-hours TWS validation on 2026-10-16 returned 78 five-minute bars per source
+for the completed regular session of AAPL 2026-11-20 340 C (conId 845042071,
+multiplier 100). All four sources, a MIDPOINT cache hit and saved-data research
+passed. This verifies that contract/session, not universal historical availability.
 
 ### Fixed historical ranges
 

@@ -114,7 +114,7 @@ class Market:
 
     def bars(
         self,
-        symbol: str,
+        symbol: str | Option,
         *,
         interval: str = "1min",
         duration: str | None = None,
@@ -125,10 +125,26 @@ class Market:
         primary_exchange: str = "",
         refresh: bool = False,
         include_sessions: bool = False,
+        data_type: str = "TRADES",
     ) -> BarSeries:
-        """Request bars; opt into separate regular/extended session-schedule queries."""
+        """Request stock bars or bounded intraday history for an explicit Option.
+
+        Options require start/end, live=False and TRADES/MIDPOINT/BID/ASK. Only
+        TRADES supplies volume. Session enrichment is currently equity-only.
+        """
         if not isinstance(include_sessions, bool):
             raise ValueError("include_sessions must be a boolean")
+        if isinstance(symbol, Option):
+            if (start is None or end is None or duration is not None or live
+                    or include_sessions or primary_exchange):
+                raise ValueError('Option history requires fixed start/end bounds, without '
+                                 'duration, live, include_sessions or primary_exchange')
+            if interval not in {'30s', '1min', '5min', '15min', '30min', '1h', '2h', '4h'}:
+                raise ValueError('Option history supports intraday intervals only')
+            if data_type not in {'TRADES', 'MIDPOINT', 'BID', 'ASK'}:
+                raise ValueError('Option data_type must be TRADES, MIDPOINT, BID or ASK')
+        elif data_type != 'TRADES':
+            raise ValueError('Equity history currently supports data_type=TRADES only')
         bounds = None
         if start is not None or end is not None:
             if start is None or end is None:
@@ -141,10 +157,16 @@ class Market:
             # the connection/control lock through a potentially lengthy download.
             with self._operation_lock:
                 provider = self._provider
-            series = provider.bars_range(
-                symbol, interval=interval, bounds=bounds, regular_hours=regular_hours,
-                primary_exchange=primary_exchange, refresh=refresh,
-            )
+            if isinstance(symbol, Option):
+                series = provider.bars_range(
+                    symbol, interval=interval, bounds=bounds, regular_hours=regular_hours,
+                    data_type=data_type, refresh=refresh,
+                )
+            else:
+                series = provider.bars_range(
+                    symbol, interval=interval, bounds=bounds, regular_hours=regular_hours,
+                    primary_exchange=primary_exchange, refresh=refresh,
+                )
             series.include_sessions = include_sessions
             if include_sessions:
                 if isinstance(bounds.end, datetime):
@@ -250,6 +272,11 @@ class Market:
         """Serve a chart until Ctrl+C, enabling session enrichment by default."""
         from .visualization.chart import serve_chart
 
+        if bars.asset_type == 'option':
+            # Option history has fixed identity/bounds; stock reload/session controls
+            # must not silently replace it with the underlying equity.
+            serve_chart(bars, port=port, open_browser=open_browser)
+            return
         if not isinstance(include_sessions, bool):
             raise ValueError("include_sessions must be a boolean")
         with self._operation_lock:
