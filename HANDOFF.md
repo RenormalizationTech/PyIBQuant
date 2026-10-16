@@ -1,10 +1,11 @@
 # Development handoff
 
-Checkpoint: 2026-10-16. After the user restored market-data access after the close,
-frozen quote recovery and rotating capture/replay passed against TWS. Single-file
-and recording-set readers now validate before disk-backed replay. All 388 local
-tests, Ruff and mypy pass. Confirmed-live quote-recovery verification still awaits
-an open trading session; frozen checks do not establish live freshness or fills.
+Checkpoint: 2026-10-16. The user clarified the primary product constraint:
+options research/backtesting should use on-demand IBKR historical requests, without
+mandatory live recording, large archives or external historical-data providers.
+Historical option acquisition is the next implementation task. Existing recording,
+rotation and reconnect tools remain optional support. The last code checkpoint
+passed all 388 local tests, Ruff and mypy; this direction update changes docs only.
 
 The current changes are saved as a local Git checkpoint; inspect `git log -1` and
 `git status -sb` when resuming or transferring machines. No remote push is part of
@@ -34,10 +35,12 @@ long/flat simulator and offline JSON/CSV example are now implemented. Live-sessi
 capture and offline simulation were verified on 2026-10-16. An explicit side-update
 freshness policy now completes simulated round trips on both live recordings.
 Opt-in quote reconnect and gap/generation recording have local test coverage.
-Next during an open trading session: finish confirmed-live quote-recovery
-verification. Sample-count rotation and disk-backed replay are complete; closed-file
-resume/restart recovery and streaming simulation remain separate future work.
-See the follow-ups below for evidence and limitations.
+Next: implement a small IBKR historical request for one explicitly selected option
+and an intraday fixed range, then research and backtest the returned history.
+Live reconnect verification and recording-scale work are optional and deferred;
+an open market or live recorder must not gate the primary research workflow.
+See the current-direction follow-up below. Earlier sections preserve implemented
+experiments and validation history, rather than setting current priorities.
 Charts are supporting inspection tools. Saved chart workspaces
 and TradingView-style feature parity are secondary backlog items.
 
@@ -53,6 +56,60 @@ can be recovered or sampled quotes are a full tick archive.
 Keep manual `ibapi` installation and logged-in TWS/Gateway as prerequisites for
 IBKR access. CI and automated SDK distribution are outside current scope. Keep
 local unit, browser and explicit TWS integration checks.
+
+## Current direction — on-demand IBKR option history
+
+The user explicitly constrained scope after reviewing the recording-centric agenda:
+"We should constrain ourselves to IBKR historical requests for options also, where
+data can be requested on the fly from IBKR." This supersedes earlier recorded-quote
+input priorities. Research and backtesting come before paper execution; existing
+recorders remain optional diagnostics, not a prerequisite or collection service.
+Do not expand vendors, whole-chain collection, persistent archives, recording
+rotation or streaming recorded-quote simulation as the next default task.
+
+Next implementation slice:
+
+1. Resolve one explicit unexpired option using the existing Option selector and
+   provider resolution. Request a short, completed intraday historical range from
+   IBKR with explicit TRADES/MIDPOINT/BID/ASK semantics, starting with a small
+   five-minute-bar example. Use fixed start-inclusive/end-exclusive bounds.
+2. Reuse historical paging/pacing and optional query caching. Preserve the resolved
+   contract's identity, selector, currency, multiplier, data type and requested
+   range in metadata. Request only user-selected contracts/ranges; no automatic
+   full-chain history download or mandatory database.
+3. Verify returned historical bars against TWS, including outside trading hours
+   when IBKR history services and permissions are available. Surface unavailable
+   history and permission failures explicitly; never substitute live recording.
+4. Add saved-input research and a separate historical-bar option backtest with
+   explicit signal/fill/cost assumptions. Expand financial research analytics and
+   result reporting before paper trading. Saved inputs are optional, bounded
+   experiment snapshots, not a required growing collection.
+
+Implementation findings: `Market.bars()` currently accepts stock symbols. The
+provider's `bars()`/`bars_range()` resolve stock contracts, cache TRADES queries
+and set equity identity/multiplier one in `_set_identity()`. The existing option
+resolver and quote identity retain exact conId/multiplier and can inform the new
+historical path. Preserve existing equity behavior and provider boundaries.
+Option historical requests and bar-based option simulation are not implemented yet.
+
+The current `backtest_option()` consumes recorded quote observations with local
+receipt clocks, sizes and feed-type checks. Historical OHLC bars are different
+inputs: do not manufacture live labels, quote receipt times, displayed sizes or
+Greeks to force them into that engine. Do not assume a MIDPOINT series supplies
+executable bid/ask fills. IBKR BID_ASK bars also use special aggregates, not
+ordinary OHLC or an atomic bid/ask quote.
+
+IBKR explicitly excludes expired options and option end-of-day data from its
+historical offering. Scope initial work to available intraday history of a
+currently resolvable option. Current chain discovery cannot reconstruct a past
+chain universe, and historical contract Greeks are not promised. Keep these
+constraints visible rather than automatically introducing another data vendor.
+Primary references: [IBKR limitations](https://www.interactivebrokers.com/docs/tws-api/doc/md/introduction)
+and [historical bar definitions](https://www.interactivebrokers.com/docs/tws-api/doc/md/historical-bars).
+
+Validation for this checkpoint: documentation consistency and `git diff --check`.
+No production code changed, no broker requests were made and the 388-test result
+belongs to the preceding code checkpoint (`59da0e5`).
 
 ## After-hours recovery, rotation and disk replay — 2026-10-16
 

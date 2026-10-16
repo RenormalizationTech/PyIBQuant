@@ -19,28 +19,43 @@ Broker-connected algorithmic execution remains planned.
 
 ## Development direction
 
-Python exports, optional session enrichment, fixed historical ranges, dataset
-metadata and a returns/SMA research example are implemented and verified against
-TWS. Frozen dataset save/reload and explicit calendar/finality audits also work
-without a broker. A first daily equity backtest now simulates next-open execution,
-costs and performance from these frozen inputs. Level-one quote snapshots support
-stocks and explicit option selectors, with live stock and frozen option snapshots
-verified against TWS. Grouped option discovery, independently owned quote streams
-and sampled recording/offline replay are also implemented. The first intraday
-option simulator now consumes our collected recordings with explicit ask/bid
-fills, costs and quote-quality checks. Live-session capture and offline simulation were verified on 2026-10-16.
-Quote reconnect with explicit generation/gap recording passed local and after-hours
-frozen-data checks. Sample-count file rotation and validated disk-backed replay
-are implemented. Confirmed-live recovery verification awaits an open trading
-session. User-controlled paper trading
-remains on the roadmap. Equities/ETFs are the initial workflow
-for general users; options trading/backtesting is a major product direction and
-the project owner's primary personal interest. A focused options research pilot
-builds on the shared foundation, ahead of broad scanners or
-advanced chart-workspace features.
-The existing chart is an optional data/results viewer. Order placement, account
-state and broker-connected strategy execution are not implemented yet. See the project plan for
-the data/strategy/broker boundaries to address before adding them.
+The primary workflow is **on-demand IBKR historical data → Python research →
+backtesting**, for equities/ETFs and selected options. The software should not
+require users to record live markets or build a large local options archive.
+Request only the contracts/date ranges needed for an experiment. Optional caching
+and saved experiment inputs support repeatability; continuous collection and
+external historical-data providers are outside the current scope.
+
+Equity/ETF historical queries, paging/pacing, exports, frozen datasets and simple
+returns/SMA research are implemented, together with a first daily equity backtest.
+Option discovery, snapshots, quote recording/replay and an experimental recorded-
+quote simulator are also implemented. Those recording tools remain optional
+supporting capabilities. Their live reconnect check is not a prerequisite for
+historical research, and paper execution remains a later milestone.
+
+**Next:** extend historical acquisition to explicitly selected option contracts,
+with a short intraday interval, fixed start/end bounds and explicit price-data type
+(TRADES, MIDPOINT, BID or ASK). Reuse the downloader's pacing, range handling and
+metadata where appropriate, without assuming stock identity or multiplier one.
+This option-history API and a historical-bar options simulator are not implemented
+yet. Historical bars must not be relabeled as live quote recordings or supplied
+with invented receipt times, quote sizes or Greeks.
+
+The scope follows IBKR's available history. IBKR lists expired-option history and
+option end-of-day data as unavailable in its historical API; see
+[IBKR data limitations](https://www.interactivebrokers.com/docs/tws-api/doc/md/introduction).
+Start with available intraday history for a currently resolvable, unexpired contract,
+not reconstruction of a past option-chain universe. TRADES, MIDPOINT, BID and ASK
+have different meanings; IBKR's BID_ASK candle also uses special aggregates rather
+than ordinary trade OHLC. See [bar definitions](https://www.interactivebrokers.com/docs/tws-api/doc/md/historical-bars).
+Missing history and permission failures must remain explicit. Historical requests
+use a logged-in TWS/Gateway and appropriate permissions; live recording and an
+open trading session are not requirements for the planned historical workflow.
+
+Charts are optional data/results viewers. Order placement, account state and
+broker-connected strategy execution remain planned. Options research/backtesting
+is a major product direction and the owner's primary interest; prioritize a usable
+historical research workflow before more collection infrastructure or paper trading.
 
 ## First slice: IBKR → Python → HTML chart
 
