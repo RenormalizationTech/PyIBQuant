@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from threading import Event, RLock, Thread
@@ -10,12 +11,15 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 from .bars import BarSeries
+from .collection import BarDatasetCollection
 from .data.cache import HistoricalCache
 from .data.history import HistoryBoundary, normalize_range
-from .errors import ConnectionError, PyIBQuantError
+from .dataset import BarDataset
+from .errors import ConnectionError, DataError, DatasetCollectionError, PyIBQuantError
 from .options import OptionChain
 from .quote_stream import QuoteStream
 from .quotes import Option, Quote
+from .requests import BarRequest
 
 if TYPE_CHECKING:
     from .data.providers.ibkr import IBKRProvider
@@ -190,6 +194,66 @@ class Market:
             if live:
                 self._subscriptions[series] = None
             return series
+
+    def datasets(
+        self, instruments: Mapping[str, str | Option | BarRequest], *,
+        start: HistoryBoundary, end: HistoryBoundary, interval: str = '1d',
+        regular_hours: bool = True, refresh: bool = False, include_sessions: bool = False,
+    ) -> BarDatasetCollection:
+        """Fetch named frozen inputs sequentially with common bounds and sampling.
+
+        Strings and Options use TRADES. Use BarRequest for per-input option price
+        sources or equity primary exchanges. Existing bars() paging/pacing/cache
+        applies. No live subscription, file write, automatic retry or bulk discovery.
+        Fail on the first error/empty/incomplete input; DatasetCollectionError names
+        it and exposes completed frozen inputs, with the original error as cause.
+        Completed windows do not establish complete market-bar coverage or finality.
+        """
+        if not isinstance(instruments, Mapping) or not instruments:
+            raise ValueError('Provide a nonempty mapping of labels to instruments')
+        for key in instruments:
+            if not isinstance(key, str) or not key.strip() or key == 'timestamp':
+                raise ValueError('Dataset labels must be nonempty strings other than timestamp')
+        for name, value in (('regular_hours', regular_hours), ('refresh', refresh),
+                            ('include_sessions', include_sessions)):
+            if not isinstance(value, bool):
+                raise ValueError(f'{name} must be a boolean')
+        intraday = {'30s', '1min', '5min', '15min', '30min', '1h', '2h', '4h'}
+        if not isinstance(interval, str) or interval not in intraday | {'1d', '1w', '1y'}:
+            raise ValueError('Provide a supported bar interval')
+        bounds = normalize_range(start, end, interval)
+        requests = {}
+        for key, selector in instruments.items():
+            try:
+                requests[key] = (selector if isinstance(selector, BarRequest)
+                                 else BarRequest(selector))
+            except ValueError as exc:
+                raise ValueError(f'{key}: {exc}') from exc
+        # Validate cross-input mode conflicts before issuing any broker requests.
+        for key, request in requests.items():
+            if isinstance(request.instrument, Option) and (interval not in intraday
+                                                          or include_sessions):
+                raise ValueError(f'{key}: option history requires intraday bars without sessions')
+        completed: dict[str, BarDataset] = {}
+        for key, request in requests.items():
+            try:
+                with self._operation_lock:
+                    if self._stop.is_set():
+                        raise ConnectionError('Market is closed')
+                series = self.bars(
+                    request.instrument, interval=interval, start=bounds.start, end=bounds.end,
+                    regular_hours=regular_hours, primary_exchange=request.primary_exchange,
+                    refresh=refresh, include_sessions=include_sessions, data_type=request.data_type,
+                )
+                dataset = BarDataset.from_series(series)
+                if not len(dataset):
+                    raise DataError('No observed bars returned')
+                if dataset.metadata().get('download', {}).get('complete') is not True:
+                    raise DataError('Historical download did not complete')
+            except Exception as exc:
+                raise DatasetCollectionError(key, completed, str(exc)) from exc
+            completed[key] = dataset
+        return BarDatasetCollection(completed)
 
     def _recover(self) -> None:
         """Reopen the socket and restore series in place, preserving chart identity."""

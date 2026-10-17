@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .bars import BarSeries
+    from .dataset import BarDataset
 
 
 class PyIBQuantError(Exception):
@@ -40,3 +43,16 @@ class HistoricalRangeError(DataError):
 
 class CacheError(PyIBQuantError):
     """A local historical cache entry could not be read or written."""
+
+
+class DatasetCollectionError(DataError):
+    """A named input failed; completed frozen inputs are explicit, never success.
+
+    The original exception is __cause__; HistoricalRangeError there retains its
+    own completed pages and remaining bounds. No automatic retry or save occurs.
+    """
+
+    def __init__(self, failed_key: str, completed: Mapping[str, BarDataset], reason: str) -> None:
+        super().__init__(f'Dataset {failed_key!r} failed: {reason}')
+        self.failed_key = failed_key
+        self.completed: Mapping[str, BarDataset] = MappingProxyType(dict(completed))

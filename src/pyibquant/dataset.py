@@ -111,6 +111,86 @@ class BarDataset:
         """Return an independent provenance copy, including original receipt time."""
         return json.loads(self._metadata_json)
 
+    def describe(self) -> dict[str, Any]:
+        """Summarize recorded identity and acquisition semantics, without guessing."""
+        metadata = self.metadata()
+        return dict(
+            fingerprint=self.fingerprint(), rows=len(self), provider=metadata.get('provider'),
+            instrument={key: metadata.get(key) for key in (
+                'symbol', 'instrument_id', 'asset_type', 'currency', 'exchange',
+                'primary_exchange', 'multiplier', 'option',
+            )},
+            sampling={key: metadata.get(key) for key in (
+                'interval', 'data_type', 'adjustment', 'regular_hours',
+                'session_timezone', 'timestamp_kind', 'timestamp_timezone',
+            )},
+            query=metadata.get('query'), coverage=metadata.get('coverage'),
+            download=metadata.get('download'),
+        )
+
+    def quality_report(
+        self, expected: Iterable[date | datetime] | None = None, *,
+        finalized_through: date | datetime | None = None,
+    ) -> dict[str, Any]:
+        """Report observations and optional caller assertions; never certify quality.
+
+        expected contains bar starts from the caller's calendar for this exact
+        query/sampling. With no calendar, missing/unexpected counts remain unknown.
+        Finality uses audit()'s inclusive BAR-START assertion, not bar-end inference.
+        Price/volume counts are descriptive flags, not corrections or validity rules.
+        The original provenance and fingerprint are never changed by a report.
+        """
+        metadata = self.metadata()
+        audit = self.audit(expected if expected is not None else (
+            bar.timestamp for bar in self._bars), finalized_through=finalized_through)
+        calendar = None if expected is None else dict(
+            basis='caller_supplied_bar_starts', expected_count=audit.expected_count,
+            observed_count=audit.observed_count, matches_calendar=audit.matches_calendar,
+            missing=[_iso_timestamp(stamp) for stamp in audit.missing],
+            unexpected=[_iso_timestamp(stamp) for stamp in audit.unexpected],
+            missing_count=len(audit.missing), unexpected_count=len(audit.unexpected),
+        )
+        flags = dict(
+            null_volume=sum(bar.volume is None for bar in self._bars),
+            zero_volume=sum(bar.volume == 0 for bar in self._bars),
+            negative_volume=sum(bar.volume is not None and bar.volume < 0 for bar in self._bars),
+            nonpositive_price=sum(min(bar.open, bar.high, bar.low, bar.close) <= 0
+                                  for bar in self._bars),
+            inconsistent_ohlc=sum(not (bar.low <= min(bar.open, bar.close)
+                                      <= max(bar.open, bar.close) <= bar.high)
+                                  for bar in self._bars),
+        )
+        warnings = list(metadata.get('warnings', []))
+        if not self._bars:
+            warnings.append('Dataset has no observed bars.')
+        complete = metadata.get('download', {}).get('complete')
+        if complete is not True:
+            warnings.append('Download is incomplete.' if complete is False
+                            else 'Download completeness is unknown.')
+        if expected is None:
+            warnings.append('No expected calendar supplied; missing market bars are unknown.')
+        elif not audit.matches_calendar:
+            warnings.append('Observed bar starts do not match the supplied calendar.')
+        if audit.unconfirmed:
+            warnings.append('Some observed bars lack caller confirmation of finality.')
+        for key in ('error', 'schedule_error'):
+            if metadata.get(key):
+                warnings.append(f'{key}: {metadata[key]}')
+        return dict(
+            schema_version=1, description=self.describe(), observations=flags,
+            calendar=calendar,
+            finality=dict(
+                basis=('caller_asserted_inclusive_bar_start'
+                       if audit.finality_checked else 'unknown'),
+                finalized_through=(_iso_timestamp(finalized_through)
+                                   if finalized_through is not None else None),
+                confirmed_count=len(self) - len(audit.unconfirmed),
+                unconfirmed_count=len(audit.unconfirmed),
+                unconfirmed=[_iso_timestamp(stamp) for stamp in audit.unconfirmed],
+            ),
+            warnings=warnings,
+        )
+
     def to_records(self) -> list[dict[str, Any]]:
         return [dict(timestamp=(bar.timestamp.astimezone(UTC)
                                 if isinstance(bar.timestamp, datetime) else bar.timestamp),
@@ -150,8 +230,15 @@ class BarDataset:
     @classmethod
     def load(cls, path: str | Path) -> BarDataset:
         """Read a supported dataset; reject corrupt, inconsistent or edited content."""
+        return cls._from_document(json.loads(Path(path).expanduser().read_text(encoding="utf-8")))
+
+    def _document(self) -> dict[str, Any]:
+        return dict(format="pyibquant.bars", version=1, sha256=self.fingerprint(),
+                    payload=self._payload())
+
+    @classmethod
+    def _from_document(cls, document: Any) -> BarDataset:
         try:
-            document = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
             if document["format"] != "pyibquant.bars" or document["version"] != 1:
                 raise ValueError("Unsupported dataset format/version")
             payload = document["payload"]

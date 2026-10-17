@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyibquant"
-version = "0.1.0.dev0"
+version = "0.1.0.dev1"
 description = "Python-first IBKR data access for quantitative research and trading workflows"
 readme = "README.md"
 requires-python = ">=3.11"

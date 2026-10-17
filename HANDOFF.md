@@ -3,7 +3,9 @@
 Checkpoint: 2026-10-16. The primary workflow is on-demand IBKR historical data →
 Python research → backtesting. Selected-option historical acquisition is implemented;
 a first single-contract historical-bar option backtest is also implemented.
-Next: broader research/performance reports and improved execution modeling.
+The basic strategy-driven bar simulator is now implemented (see checkpoint below).
+Named scientific datasets, quality reports and lightweight study starters are delivered.
+The current local development snapshot is 0.1.0.dev1; see docs/API.md and CHANGELOG.md.
 Do not require live recording, a large local archive or external historical-data
 providers. Research/backtesting comes before broker-connected paper execution.
 
@@ -119,15 +121,182 @@ prerequisite for research or automatically download whole option chains.
   reload checks without optional dependencies. No chart code changes in this slice;
   previous browser regression remains applicable.
 
-## Next — research and execution-model improvements
+## Strategy-driven backtesting checkpoint — 2026-10-16
 
-Expand research/performance reports and comparisons on frozen inputs. A paired
-BID/ASK model could add direction-aware spread pricing using synchronized source
-bars, while preserving the limits of OHLC aggregates. Lifecycle and multi-leg
-models need separate explicit scope. Paper execution remains later work.
+- `src/pyibquant/simulation.py`: `Feed`, `Context`/`Strategy`, `Order`, `ExecutionModel`,
+  `NextOpen`, `Portfolio`, `SimulationResult`, `TargetStrategy` and `simulate()`.
+- Complete frozen daily/intraday inputs, USD only. Existing equity and option
+  fixed-size APIs remain compatible; new strategies use the general simulator.
+- Explicit close/open clock: publish all completed bars, invoke one strategy
+  callback, then execute eligible market orders at actual supplied opens. Strategy
+  histories exclude uncompleted bars; execution inputs exclude future OHLCV.
+- Different intraday intervals/gaps, empty/stale histories, data ages and mark times.
+  Daily feeds use synthetic UTC days and cannot mix with intraday feeds. Intraday
+  finality must cover start + interval, unlike the legacy option start assertion.
+- Shared cash, submission-order execution, whole long quantities, cash/holding
+  rejection, cancellation and end-of-data cancellation. No cash reservation or
+  implicit sell-first ordering. `TargetStrategy(..., decision_feed=...)` lets an
+  underlying signal trade an option and replaces its outstanding target orders.
+- Scaling/partial exits, multiplier-aware weighted-average cost basis including
+  allocated entry fees, realized/unrealized P&L. Equity records separate close/open
+  phases at adjacent boundaries so drawdown includes both marks and execution costs.
+- Model protocol returns a full fill or defers. `NextOpen` supports a flat fee,
+  per-unit fee and adverse bps slippage. Settings and strategy parameters are
+  serialized with fingerprints, metadata, finality/calendar assertions and logs.
+- `examples/backtest_strategy.py` runs equity or underlying-driven option targets
+  from saved inputs, saving exact datasets alongside atomic JSON results. Missing
+  or stale signals target zero; tolerated signal age is an explicit argument.
+- No broker changes/requests are needed. No shorting/margin, FX, limit/stops,
+  partial fills or expiry lifecycle. Option simulation horizons crossing expiry
+  are rejected even if that option's own data ends earlier. User code/external
+  inputs remain responsible for their own lookahead and reproducibility.
+- Tests cover accounting with nonstandard multipliers and partial sales, shared
+  cash/order priority, cancellation, asynchronous clocks/stale data, future-bar
+  isolation, invalid model outputs, SMA parity, atomic results and runnable examples.
+- Validation: 389 tests (53 new), Ruff, mypy and whitespace checks pass. A clean
+  wheel built from a temporary source copy passed SDK/pandas/PyArrow-free equity
+  and option strategy simulation. The example also ran offline on saved AAPL
+  2025 daily inputs and the 78-bar option MIDPOINT input, with costs. Outputs are
+  ignored under `charts/strategy-backtest-check/{equity,option}/`. Underlying-driven
+  option behavior is verified with controlled multi-feed test fixtures, not a new
+  live download. No chart changes; prior browser regression remains applicable.
+
+## Scientific research data checkpoint — 2026-10-16
+
+User direction: scientific research means enabling users to study market structure
+(e.g. correlations, scaling/multifractality and random matrices). Keep built-in
+analysis small; prioritize solid, useful datasets requested/loaded from IBKR.
+Backtest comparisons and out-of-sample reports remain backtesting features.
+
+- `BarDatasetCollection` stores named frozen inputs in one atomic integrity-checked
+  JSON document; every input retains its full bars, fingerprint and provenance.
+- Explicit inner/outer exact bar-start alignment requires matching interval,
+  timestamp kind and session settings. Known incomplete downloads are rejected.
+  No filling/resampling or inferred calendar; dropped/absent/null counts and source
+  metadata accompany records and optional pandas output. Unknown quality stays unknown.
+- `examples/research_collection.py fetch` uses bounded sequential equity/ETF queries
+  and existing pacing/cache; no collection is written on empty/incomplete/failing
+  inputs. `inspect` loads and aligns offline. Selected-option datasets can also be
+  put into collections via Python; no bulk option-chain download is introduced.
+- Validation: 423 tests (34 new), Ruff, mypy, whitespace checks and a clean
+  SDK/pandas/PyArrow-free wheel smoke pass. Previously saved AAPL option inputs
+  for TRADES/MIDPOINT/BID/ASK round-tripped with unchanged source fingerprints;
+  both joins retained 78 UTC starts, nullable volume remained absent and offline
+  inspection exported 78 rows. Outputs remain ignored under
+  `charts/scientific-data-check/`. This is reuse of saved data, not fresh acquisition.
+- Fresh TWS AAPL/MSFT/SPY acquisition for [2026-10-12,2026-10-16) passed:
+  four daily bars per instrument, both joins retained four dates with no absent
+  observations among inputs, and offline inspection/CSV export passed. The initial
+  connection failure was sandbox network denial (direct socket errno 1), not a
+  disconnected TWS. Retrying with approved network access succeeded. Inputs and
+  exports remain ignored under `charts/scientific-data-check/`. No orders or
+  account/settings changes were made. Next: follow concrete scientific data needs. Do not build advanced estimators or
+  prioritize performance reports as the scientific research milestone.
+
+## Dataset quality and named acquisition checkpoint — 2026-10-16
+
+- `BarDataset.describe()` and collection `describe()` summarize recorded identity,
+  sampling/source/adjustment/session semantics, queries, coverage, download progress
+  and fingerprints. `quality_report()` adds JSON-compatible observation flags,
+  warnings/errors and optional caller calendar/finality checks. No source mutation,
+  inferred expected calendar, automatic repairs or overall quality score.
+- Finality in reports uses `audit()`'s inclusive BAR-START convention, explicitly
+  distinct from the general simulator's intraday end-coverage requirement.
+- Collection reports accept calendars/finality keyed by input label. They expose
+  source differences and optional alignment losses; incompatible/partial inputs
+  still receive individual reports with an unavailable-alignment reason.
+- `Market.datasets(mapping, start=..., end=..., interval=...)` requests and freezes
+  named inputs sequentially through existing `bars()` paging/pacing/cache. Strings
+  and Options default to TRADES; `BarRequest` supports per-input option sources
+  and equity primary exchanges. Common hours, refresh and equity-only sessions.
+- First error/empty/incomplete input raises `DatasetCollectionError`: `failed_key`,
+  read-only `completed` mapping, original `__cause__` (including partial-page
+  HistoricalRangeError). No automatic retries, later requests or filesystem writes.
+  The example now uses this public API and can export `--quality-report` JSON.
+- Fresh TWS checks passed: AAPL/MSFT/SPY, four daily bars each for
+  [2026-10-12,2026-10-16); mixed AAPL equity plus 2026-11-20 340 C MIDPOINT,
+  six five-minute bars each on 2026-10-16 [09:30,10:00) New York. Option identity
+  conId 845042071/multiplier 100 and nullable volume preserved. Explicit calendar/
+  finality checks and broker-free reload, reports and CSV export passed.
+  Artifacts remain ignored under `charts/scientific-quality-check/`.
+- Use approved network access for live checks: the default execution sandbox denies
+  local sockets (errno 1) even while TWS is listening. No TWS/account/order changes.
+- Validation: 475 tests (52 new), Ruff, mypy and whitespace checks pass. A clean
+  wheel passed existing smoke checks plus named request coordination and quality
+  reports without SDK/pandas/PyArrow installed. New tests cover anomalies, unknown/partial/empty
+  inputs, mismatched calendars, reports on incompatible collections, source
+  differences, acquisition ordering/preflight/failures and offline example outputs.
+- The agreed scientific-data foundation is delivered. Further transformations,
+  sampling/calendar integration or acquisition scope should follow a concrete study;
+  advanced statistical estimators remain user-owned. Backtest reports stay separate.
+
+## Lightweight study starters checkpoint — 2026-10-16
+
+- User requested both daily correlations and intraday scaling preparation, provided
+  they require no extra packages or complicated construction. `pyibquant.studies`
+  uses only the standard library; no dependency/configuration changes.
+- `daily_correlations(collection)` constructs log returns on adjacent union dates
+  before listwise selection, preserving endpoints/missing values and reporting
+  common sample/exclusion counts plus Pearson matrix. Constants/insufficient data
+  yield null correlations. No filling or source/currency harmonization.
+- `intraday_scaling(dataset, lags=..., session_timezone=...)` exports log-price
+  increments and first absolute/second moments. Exact uninterrupted grids and
+  same local date required; missing intermediate bars and date changes break
+  sequences. Explicit timezone needed if source metadata is unknown. Overlapping
+  increments remain dependent; no fitted exponents/Hurst/multifractal claims.
+- Both helpers reject empty, nonpositive-close and incomplete/unknown-download
+  inputs. Reports retain source fingerprints, quality evidence and assumptions;
+  provenance/finality remains unchanged. Calendar completeness is not inferred.
+- `examples/research_studies.py` runs either workflow entirely offline against a
+  saved collection, writing JSON values/results/provenance. It prevents overwriting
+  source inputs. See README for acquisition and analysis commands.
+- Fresh TWS validation: AAPL/MSFT/SPY 2025 daily inputs (250 rows each, 249 common
+  log-return observations), AAPL five-minute [2026-10-12,2026-10-16) (312 bars;
+  308/304/296/280 valid increments at lags 1/2/4/8). Offline examples passed.
+  Generated artifacts ignored under `charts/scientific-studies-check/`.
+- Validation: 497 tests (22 new), Ruff, mypy and whitespace checks pass. A clean
+  wheel ran both helpers without SDK/pandas/PyArrow/NumPy/SciPy dependencies.
+  New tests check known inverse correlations, missing-period
+  isolation, constants, hand-calculated moments, gaps, timezone/date boundaries,
+  input restrictions, empty lags and offline CLI safety.
+
+## Development snapshot checkpoint — 0.1.0.dev1
+
+- Reviewed supported API entry points and added `docs/API.md`, with acquisition,
+  quality/alignment, scientific helpers and simulation in one workflow. Updated
+  overview/roadmap statements that still described delivered features as next work.
+- Added `CHANGELOG.md`, explicit source manifest and version `0.1.0.dev1`.
+  Source distributions include docs, examples and validation scripts; generated
+  datasets, virtual environments and credentials are excluded by curated copying.
+- Fresh `tests/live_workflow_check.py` passed through TWS: AAPL/MSFT/SPY daily
+  2025 inputs and AAPL/selected 2026-11-20 340 C MIDPOINT for the completed
+  2026-10-16 regular session. All post-download work runs after broker close:
+  persistence, quality, correlations, scaling, equity/option/general strategy
+  simulation and HTML generation. No account/orders/settings changes.
+- Chrome offline regressions passed for native chart interactions, history
+  pagination and session/freshness/reconnect rendering. No shared live-chart
+  session or TWS settings were changed by these tests.
+- Release acceptance: 497 pytest tests, Ruff, mypy, whitespace checks; build source
+  archive, then wheel from that archive, inspect contents and run SDK/optional-
+  dependency-free wheel smoke and CLI checks. `tests/build_check.py` performs the
+  artifact checks using existing tools, without downloads. Artifacts/checksums go
+  under ignored `dist/`. Re-run it after changing source or docs.
+- Locally tested with Python 3.14 only; Python 3.11+ remains declared compatibility,
+  not a validated multi-version matrix. No CI/automatic SDK install introduced.
+- This is a local development checkpoint. No remote push, tag or publication is
+  implied. Further scope should follow concrete research needs or a separate
+  explicit execution/backtesting request.
 
 Implementation entry points:
 
+- `src/pyibquant/dataset.py`, `collection.py`, `requests.py`, `Market.datasets()` and
+  `tests/test_dataset_quality.py`/`tests/test_dataset_requests.py`: descriptions,
+  quality assertions and named acquisition/error handling.
+- `src/pyibquant/collection.py`, `examples/research_collection.py` and
+  `tests/test_collection.py`: scientific data collections and alignment.
+
+- `src/pyibquant/simulation.py`, `examples/backtest_strategy.py` and
+  `tests/test_simulation.py`: general strategy, execution and portfolio tools.
 - `src/pyibquant/option_backtest.py`, `examples/backtest_option.py` and
   `tests/test_option_backtest.py`: new option simulation, reports and regressions.
 - `src/pyibquant/research.py` / `backtest.py`: shared research and equity simulator.

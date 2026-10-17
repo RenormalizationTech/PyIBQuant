@@ -4,15 +4,18 @@ Last reconciled: 2026-10-16. Checkboxes describe implemented behavior, not a rel
 The full project direction remains in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
-Current priority: research/performance reports and improved execution modeling on
-saved IBKR historical inputs. Equity daily backtesting and the first intraday
-single-option long/flat backtest are implemented. Options use explicit synthetic
-next-open fills on TRADES/MIDPOINT, resolved multipliers and per-contract costs.
-Both example strategies ran offline on saved 78-bar AAPL option datasets.
+The basic strategy-driven backtesting tools are implemented: time-aware feeds,
+strategy callbacks, market-order submission/cancellation, replaceable execution,
+shared cash/positions with variable sizing and partial exits, and reproducible
+results. Existing fixed-size equity/option APIs retain their behavior. Named
+scientific datasets, quality reports and small daily/intraday study starters are
+also implemented. The local 0.1.0.dev1 snapshot packages these foundations with
+an API guide, source-distribution examples and reusable validation scripts. Strategy comparisons and performance
+reports remain part of the backtesting backlog.
 
 Historical acquisition supports all four TRADES/MIDPOINT/BID/ASK sources and was
 verified after hours against TWS, including cache reuse. Current validation:
-336 tests, typing/style checks and a clean SDK-free wheel smoke check pass. The
+497 tests, typing/style checks and a clean SDK-free wheel smoke check pass. The
 previous chart browser regression passed; this slice changes no chart code.
 Live recording, bulk collection and external providers are not required. The
 obsolete recording/rotation/replay stack and recorded-quote simulator were removed.
@@ -47,7 +50,53 @@ bounded to a selected contract and requested range, with optional cache/save for
 repeatability. The recorded-quote experiment was removed; the primary product
 data model uses on-demand IBKR historical inputs.
 
-## Option history and first backtest delivered; next — research reports
+## Scientific research data — current priority
+
+Support scientists studying correlations, scaling/multifractality, random matrices
+and other phenomena through dependable IBKR data. Users own advanced analysis;
+PyIBQuant supplies acquisition, loading, provenance and small preparation tools.
+Research does not require a strategy, backtest, chart or live recorder.
+
+- [x] Bounded per-instrument requests, frozen inputs, provenance and explicit calendar audits
+- [x] Named multi-instrument collections with atomic save/reload and per-source integrity checks
+- [x] Exact bar-start inner/outer alignment, explicit join choice, no filling or resampling
+- [x] Records/optional pandas output plus source fingerprints and dropped/absent/null counts
+- [x] Sequential equity/ETF acquisition example and broker-free collection inspection
+- [x] Round-trip saved IBKR option inputs and inspect/export aligned values offline
+- [x] Verify a fresh AAPL/MSFT/SPY collection against TWS and inspect/export offline
+- [x] Dataset/collection describe and quality reports with explicit per-input calendar/finality assertions
+- [x] Report volume/price observation flags, provider warnings, source differences and alignment blockers
+- [x] Market.datasets named acquisition with per-source BarRequest and explicit first-failure diagnostics
+- [x] Fresh mixed equity/selected-option request verification and offline JSON quality exports
+- [x] Dependency-free daily log-return panel and descriptive Pearson correlation starter
+- [x] Intraday gap/date-aware log increments and first/second moment summaries by lag
+- [x] Fresh TWS verification of both starters; offline saved-data examples
+- [ ] Extend preparation only for concrete study needs; advanced models stay user-owned
+
+No built-in advanced statistical framework is planned. Unknown coverage/finality,
+source semantics and IBKR availability limits must remain visible. Alignment is
+not an exchange-calendar audit or a certification of comparable observations.
+
+## Basic backtesting tools
+
+- [x] Bar-driven clock with completed histories and immutable decision snapshots
+- [x] Multiple explicit instruments, unequal intraday intervals, missing/stale data ages
+- [x] User-owned strategy state and underlying-driven option decisions
+- [x] Market orders, cancellation, pending/filled/rejected/canceled states and explicit reasons
+- [x] Replaceable execution model with open-only inputs and serialized settings
+- [x] Shared USD cash, long-only whole quantities, scaling and partial exits
+- [x] Weighted-average ledger, actual multipliers, fee allocation and P&L reconciliation
+- [x] Order/fill logs, position snapshots, open/close equity history and basic metrics
+- [x] Input fingerprints, finality/calendar assertions, strategy/model settings and atomic results
+- [x] Equity SMA parity with existing simulation and underlying-to-option examples
+- [ ] Backtest experiment reports, benchmark comparisons and out-of-sample evaluation
+
+Keep the foundation small. Limit/stop orders, partial fills, spread/liquidity models,
+shorting/margin, FX and option lifecycle/multi-leg accounting require separate scope.
+Daily and intraday feeds cannot mix without an explicit session-time model. Broker
+execution remains separate. See README's strategy-driven backtesting section.
+
+## Option history and first backtest delivered
 
 - [x] Resolve one explicit unexpired option selector and retain exact identity/multiplier
 - [x] Add intraday historical requests with fixed start/end bounds and explicit TRADES/MIDPOINT/BID/ASK types
@@ -57,7 +106,7 @@ data model uses on-demand IBKR historical inputs.
 - [x] Verify a small recent historical request against TWS, including when the exchange is closed
 - [x] Provide an offline research example from the returned historical input
 - [x] Add a historical-bar option backtest with explicit timing/cost assumptions appropriate to the input bars
-- [ ] Expand research/performance analytics and a reproducible research-to-backtest report
+- [ ] Backtesting: performance comparisons and a reproducible strategy-evaluation report
 
 Acceptance: request a selected option's available intraday history from IBKR on
 demand, then inspect/analyze saved inputs without a chart, live recorder or an

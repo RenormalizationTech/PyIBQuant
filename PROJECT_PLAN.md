@@ -41,8 +41,12 @@ been removed to keep the software focused on on-demand IBKR history. Selected-op
 intraday history and saved-input returns/SMA research are now implemented and
 verified against TWS after exchange hours. A first single-contract intraday
 option backtest now runs offline with explicit synthetic next-open fills, resolved
-multiplier and per-contract costs. Next: broader research/performance reports and
-execution modeling.
+multiplier and per-contract costs. A general bar-driven simulator now adds user
+strategy callbacks, multiple explicit instruments, variable sizing/partial exits,
+market-order lifecycle, replaceable execution and a shared USD portfolio ledger.
+Named scientific datasets, quality reports and small dependency-free study
+starters are implemented. Current milestone: review, regression and a local
+development snapshot; advanced analysis remains user-owned.
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.
@@ -90,10 +94,11 @@ PyIBQuant should support this entire research-to-trading loop without forcing ev
 experiment into a trading-strategy abstraction. Users should be able to fetch and
 analyze data directly from Python. Plotting is an optional inspection step.
 
-Near-term order: reliable historical datasets and Python exports, reusable research
-calculations, a small equity backtester, result inspection, then paper-trading
-integration. Expand chart/workspace features when a research or trading use case
-needs them.
+Near-term priority: reliable scientific datasets, multi-instrument acquisition and
+loading, transparent alignment and Python exports. Existing research helpers and
+backtest engines remain useful. Strategy reports are a separate backtesting
+improvement; paper-trading integration comes later. Expand chart/workspace
+features when a concrete research or trading use case needs them.
 
 ---
 
@@ -114,8 +119,10 @@ Explicit-contract intraday option history now supports bounded queries, all four
 TRADES/MIDPOINT/BID/ASK sources, exact identity/multiplier, caching and saved-input
 returns/SMA research. After-hours TWS validation passed for one completed AAPL
 option session. The first bar-based option backtest is implemented for long/flat
-TRADES/MIDPOINT inputs with explicit synthetic next-open execution. Expand
-financial research/performance reports and execution modeling next.
+TRADES/MIDPOINT inputs with explicit synthetic next-open execution. The basic
+strategy-driven engine now supports underlying signals driving option trades,
+shared cash and partial exits. Prioritize scientific data acquisition/loading next;
+keep built-in analysis small and leave advanced methods to users.
 The removed recorded-quote simulator is not the historical backtest model; do not
 invent sizes/Greeks/receipt timestamps for historical bars. Current chain discovery is not a historical
 point-in-time chain. Expired options and option EOD history are outside IBKR's
@@ -226,11 +233,10 @@ Research should be possible independently of strategy execution.
 For example:
 
 ```python
-bars = market.bars(...)
-
-returns = research.log_returns(bars)
-
-correlation = research.correlation(returns)
+bars = market.bars("AAPL", interval="1d", start="2025-01-01", end="2026-01-01")
+dataset = BarDataset.from_series(bars)
+records = dataset.to_records()
+# Analyze these inputs with your chosen scientific tools.
 ```
 
 should not require creating a `Strategy`.
@@ -843,34 +849,30 @@ It should not initially execute trades automatically.
 
 ---
 
-# 14. Research Layer
+# 14. Scientific Research Data Layer
 
-Research code must remain independent of trading strategies.
+Scientific research is independent of strategy execution. Users may study
+correlations, scaling/multifractality, random-matrix connections and other market
+phenomena without producing trading signals. PyIBQuant should provide useful,
+well-described IBKR datasets; users supply advanced scientific methods.
 
-Example:
+Prioritize explicit instruments/ranges, resolved identities, original OHLCV and
+missing volume, source/adjustment/session semantics, bounded pacing/cache reuse,
+frozen persistence, visible errors and coverage limits, and transparent alignment.
+Do not build a large statistical framework or infer missing prices, corporate
+history, exchange calendars, historical chain membership or bar finality.
 
-```python
-bars = market.bars(...)
-
-returns = research.log_returns(bars)
-
-rv = research.realized_volatility(returns)
-```
-
-Potential future areas include:
-
-```text
-time series
-statistics
-cross-sectional analysis
-correlation
-volatility
-options
-spectral analysis
-machine learning
-```
-
-Do NOT create these modules until concrete research requires them.
+Implemented: `BarDataset` for individual frozen inputs and `BarDatasetCollection`
+for named multi-instrument bundles, atomic save/reload, exact bar-start inner/outer
+alignment, records/optional pandas export and per-input alignment provenance.
+`describe()`/`quality_report()` expose recorded semantics, observation flags,
+per-input calendar/finality assertions and alignment blockers. `Market.datasets()`
+coordinates named bounded requests; `BarRequest` selects per-input sources/exchanges
+and failures retain the named input, completed datasets and original cause.
+A small descriptive Pearson starter is now implemented alongside daily return
+panels and intraday log-increment/moment preparation. Advanced correlation models,
+multifractal methods and random-matrix estimators remain user-owned. Benchmark comparisons, parameter studies and out-of-sample evaluation
+belong to the backtesting layer.
 
 ---
 
@@ -1113,31 +1115,32 @@ Do NOT introduce a database server.
 
 ---
 
-# 22. Phase 4 — Research Primitives
+# 22. Phase 4 — Scientific Research Datasets
 
-**Goal:** Support serious quantitative experiments.
+**Goal:** Supply dependable IBKR inputs for user-owned scientific experiments.
 
-### TODO
+- [x] Bounded historical requests and records/CSV/optional pandas exports
+- [x] Frozen dataset persistence, provenance and explicit calendar/finality audits
+- [x] Named multi-instrument collection persistence with integrity checks
+- [x] Explicit inner/outer timestamp alignment, visible missing values and source metadata
+- [x] Sequential acquisition and offline collection inspection example
+- [x] Verify a small AAPL/MSFT/SPY acquisition against TWS and reload/export offline
+- [x] Dataset/collection description and quality reports without implicit repair or certification
+- [x] Named collection requests with per-input source/exchange selectors and explicit failures
+- [x] Verify mixed equity/selected-option acquisition and offline quality reports against TWS
+- [x] Small standard-library daily return/correlation and intraday increment/moment starters
+- [x] Fresh IBKR input verification of both workflows without new dependencies
+- [ ] Further preparation driven by concrete study requirements; advanced estimators stay user-owned
 
-- [ ] arithmetic returns
-- [ ] log returns
-- [ ] rolling statistics
-- [ ] realized volatility
-- [ ] resampling
-- [ ] multi-symbol alignment
-- [ ] trading-session handling
-- [ ] missing-data handling
-- [ ] basic correlation analysis
-
-Example:
+Small existing returns/SMA helpers remain useful conveniences. Advanced scientific
+analysis is not a prerequisite or a planned framework. Resampling and further
+transformations require explicit future scope and preserved semantics.
 
 ```python
-dataset = market.bars(
-    symbols=["AAPL", "MSFT", "NVDA"],
-    ...
-)
-
-returns = dataset.log_returns()
+collection = BarDatasetCollection.load("inputs.collection.json")
+aligned = collection.align(field="close", join="outer")
+records = aligned.to_records()
+# Use your chosen scientific tools; missing observations remain explicit.
 ```
 
 ---
@@ -1470,7 +1473,8 @@ The recorded-quote option simulator was removed. The first historical-bar option
 engine now consumes complete saved intraday TRADES/MIDPOINT inputs, with resolved
 multiplier, next-open synthetic fills and per-contract costs. Expiry-day bars and
 BID/ASK-only execution remain outside this model.
-Portfolio simulation, broader option lifecycle models and broker controls remain planned.
+The general long-only shared-cash portfolio simulator is also implemented.
+Broader option lifecycle models and broker controls remain planned.
 
 ---
 
@@ -1518,7 +1522,8 @@ strategies passed offline on saved TRADES/MIDPOINT AAPL inputs. Local validation
 336 tests plus typing/style checks. Integer-valued datasets now retain the same
 fingerprint on save/reload. No broker request was needed for this slice.
 
-Next: broader financial research/performance reports and improved execution models.
+Named scientific datasets and lightweight study starters are implemented.
+Backtest performance reports and improved execution models remain a separate backlog.
 No live recorder or huge local collection is required. The option model does not
 reconstruct executable bid/ask fills, lifecycle settlement, adjusted deliverables
 or historical chain membership. BID/ASK-only and expiry-day inputs are rejected.

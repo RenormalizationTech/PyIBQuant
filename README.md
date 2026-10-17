@@ -8,10 +8,13 @@ Charts help inspect data, signals and results. Live IBKR access requires a manua
 installed `ibapi`, a running and logged-in TWS or IB Gateway, and the account and
 market-data permissions needed for the requested instruments. Implemented features
 include market data, frozen datasets, research calculations, daily equity
-backtests, a first intraday single-option backtest, stock/option quotes and interactive charts.
+backtests, a strategy-driven portfolio simulator, stock/option quotes and interactive charts.
 Broker-connected algorithmic execution remains planned.
 
 ## Project documents
+
+- [Python API guide](docs/API.md): supported entry points and an end-to-end workflow
+- [Development changes](CHANGELOG.md): local development snapshot contents
 
 - [Development handoff](HANDOFF.md): setup on another machine, current architecture and limitations
 - [Project TODO](TODO.md): research priorities, completed foundations and supporting chart backlog
@@ -35,7 +38,10 @@ The superseded recording/replay stack and recorded-quote simulator were removed.
 
 A first historical-bar option backtest now supports single-contract long/flat
 TRADES/MIDPOINT research with explicit synthetic next-open fills and costs.
-**Next:** expand financial research/performance reports and execution modeling.
+The bar-driven simulator also supports user strategy callbacks, multiple explicit
+instruments sharing cash, variable sizing/partial exits, cancellable market orders
+and replaceable execution models. Named multi-instrument datasets, quality reports
+and two lightweight scientific study starters are also implemented.
 Paper execution comes later. Historical bars do not supply quote receipt times,
 quote sizes or historical Greeks.
 
@@ -151,6 +157,231 @@ Pandas is imported only when `to_dataframe()` is called. CSV contains OHLCV only
 `bars.metadata()` provides separate JSON-compatible instrument/query metadata to
 save alongside it. `BarDataset` saves/reloads both bars and metadata (see below).
 See `examples/research_exports.py` for a runnable local example.
+
+## Scientific research: dependable data, user-owned analysis
+
+Scientific research is a separate use case from trading-strategy evaluation.
+Users may study correlations, scaling/multifractality, random matrices or other
+market phenomena without defining a strategy. PyIBQuant's role is to request and
+load useful, well-described IBKR datasets, not implement a large scientific
+analysis framework. Users bring their own methods and scientific Python tools.
+
+Priorities are explicit instruments and bounded queries, original OHLCV and
+nullable volume, resolved identity, source/adjustment/session semantics, visible
+errors and coverage limits, frozen save/reload, and transparent multi-instrument
+alignment. No implicit filling, resampling, currency conversion or claims that
+IBKR data is point-in-time, survivorship-free, gap-free or independently finalized.
+Advanced correlation, multifractal and random-matrix estimators remain user-owned.
+Strategy comparisons, benchmarks and out-of-sample reports belong to backtesting.
+
+`BarDatasetCollection` stores named frozen inputs together, retaining each source's
+metadata and fingerprint. `align(field="close", join="outer")` returns the union
+of observed bar starts with `None` for absent values; `join="inner"` keeps their
+intersection. The join must be chosen explicitly. Both require matching intervals,
+timestamp kinds and session settings and reject known incomplete downloads. They
+compare observed timestamps only: gaps shared by all sources remain undetected.
+Different price sources, currencies and adjustments remain visible in per-input
+metadata; users decide whether those series are scientifically comparable.
+Bar starts are alignment keys, not a claim of simultaneous price observations.
+Daily dates retain source session labels; intraday starts normalize to UTC.
+
+```python
+from pyibquant import BarDatasetCollection, Market
+
+with Market.ibkr() as market:
+    collection = market.datasets(
+        {"apple": "AAPL", "microsoft": "MSFT", "benchmark": "SPY"},
+        interval="1d", start="2025-01-01", end="2026-01-01",
+    )
+collection.save("charts/scientific/inputs.collection.json")
+
+# Later, offline, without the SDK:
+collection = BarDatasetCollection.load("charts/scientific/inputs.collection.json")
+aligned = collection.align(field="close", join="outer")
+records = aligned.to_records()  # date/datetime values; absent observations are None
+report = aligned.metadata()    # source metadata/digests, dropped/absent/null counts
+# frame = aligned.to_dataframe()  # optional pandas; missing values become NaN
+```
+
+The collection keeps all original bars even when an inner join drops rows from a
+view. Each source still supports `audit()` with an explicit expected calendar and
+caller-supplied finality. Integrity digests detect edits, not authenticity or data
+quality. Empty inputs are retained by the API; alignment can return zero rows.
+Unknown download completeness remains unknown. Collections also accept saved
+selected-option datasets; they do not reconstruct historical option universes.
+
+Runnable equity/ETF acquisition and offline inspection:
+
+```sh
+python examples/research_collection.py fetch AAPL MSFT SPY \
+  --start 2025-01-01 --end 2026-01-01 \
+  --output charts/scientific/inputs.collection.json
+python examples/research_collection.py inspect charts/scientific/inputs.collection.json \
+  --join outer --csv charts/scientific/closes.csv \
+  --quality-report charts/scientific/quality.json
+```
+
+Fetch uses sequential bounded requests and existing pacing/optional `--cache-dir`.
+It writes the collection only after every requested input is nonempty and its
+download completed; errors propagate without publishing a partial collection.
+Completed downloads still do not certify expected-market-bar coverage. The saved
+collection and inspection metadata are the provenance; CSV alone is only values.
+
+### Inspect dataset quality
+
+`describe()` on a `BarDataset` or collection summarizes recorded identities,
+sampling/source/session/adjustment semantics, requested and observed coverage,
+download status/empty windows and fingerprints. `quality_report()` adds
+JSON-compatible evidence, without modifying inputs or issuing broker requests:
+
+```python
+from datetime import date
+
+summary = collection.describe()
+quality = collection.quality_report(join="outer")
+# quality["datasets"]["apple"]["calendar"] is None: no expected calendar was supplied.
+# quality["alignment"] contains row losses, missing values and per-source metadata.
+
+# Optional additional acquisition for a small calendar-assertion example:
+with Market.ibkr() as market:
+    short = market.datasets({"apple": "AAPL"}, start="2026-10-12", end="2026-10-16")
+expected = [date(2026, 10, day) for day in (12, 13, 14, 15)]
+quality = short.quality_report(
+    {key: expected for key in short},
+    finalized_through={key: date(2026, 10, 15) for key in short},
+    join="outer",
+)
+```
+
+Supply expected starts from your chosen calendar for each input's query and
+sampling; PyIBQuant does not generate a calendar. A single input also supports
+`dataset.quality_report(expected, finalized_through=...)`. Calendar mismatches
+report missing/unexpected starts; no calendar means these remain unknown.
+**Finality here uses the existing `audit()` convention: the caller confirms bars
+starting at or before the supplied bound. It does not infer bar completion from
+that instant.** The general simulator's intraday finality convention additionally
+requires coverage through bar end; use that API's documented assertions.
+
+Observation flags count bars with null/zero/negative volume, nonpositive OHLC prices
+or inconsistent OHLC bounds. These are descriptive, not universal validity rules
+or automatic repairs. Missing option volume is expected for non-TRADES sources.
+Original provider warnings/errors remain visible. Reports carry no overall quality
+score or guarantee; matching timestamps does not verify prices or corporate history.
+
+Collection reports accept calendars/finality per label, reject unknown labels,
+and list differences in price source, currency, adjustment, multiplier and sampling.
+Without `join`, alignment is not attempted. With a join, incompatible or incomplete
+inputs produce `alignment.status="unavailable"` with a reason, while individual
+reports remain available. Alignment never converts currencies or harmonizes sources.
+
+### Fetch named collections from Python
+
+`Market.datasets()` accepts a nonempty mapping of labels to equity/ETF symbols,
+explicit `Option` selectors, or `BarRequest` values. Inputs share fixed start/end,
+interval and `regular_hours`; the method reuses `Market.bars()` sequentially with
+its existing paging, pacing and optional cache. `refresh` and equity-only
+`include_sessions` are supported. No live mode, bulk discovery or file writes.
+
+```python
+from datetime import date
+from pyibquant import BarRequest, DatasetCollectionError, Market, Option
+
+option = Option("AAPL", date(2026, 11, 20), 340, "C",
+                trading_class="AAPL", multiplier=100)
+with Market.ibkr() as market:
+    try:
+        inputs = market.datasets(
+            {"underlying": BarRequest("AAPL", primary_exchange="NASDAQ"),
+             "call_midpoint": BarRequest(option, data_type="MIDPOINT")},
+            interval="5min", start="2026-10-16T09:30:00-04:00",
+            end="2026-10-16T10:00:00-04:00",
+        )
+    except DatasetCollectionError as error:
+        print(error.failed_key, list(error.completed), error.__cause__)
+        raise
+inputs.save("charts/scientific/mixed.collection.json")
+```
+
+Choose an available unexpired option/completed range when running. Bare strings
+and Options use TRADES; `BarRequest` selects an option's MIDPOINT/BID/ASK source or
+an equity primary exchange. Options still require intraday bars without session
+enrichment. Mixed option/equity inputs retain their distinct source semantics.
+
+The first failed, empty or incomplete input raises `DatasetCollectionError`.
+`failed_key` identifies it, `completed` is a read-only mapping of earlier frozen
+inputs, and `__cause__` preserves the original error. A nested `HistoricalRangeError`
+still contains that input's completed pages and remaining range. Later inputs are
+not requested. No retry or partial save occurs automatically. Local selector/mode
+errors raise `ValueError` before requesting data; broker availability is checked
+by the existing acquisition path. Successful planned windows still do not establish
+expected-market-bar completeness. The example script saves only a successful collection.
+
+Verified with local TWS: AAPL/MSFT/SPY, four daily bars each for
+[2026-10-12,2026-10-16), plus AAPL equity and the selected call MIDPOINT, six
+five-minute bars each for 2026-10-16 [09:30,10:00) New York. Offline quality reports,
+explicit calendar assertions, nullable option volume and exports passed. These
+checks establish those requests only, not universal IBKR availability.
+
+### Two lightweight scientific study starters
+
+Both workflows use only Python's standard library and saved collections. There
+are no NumPy/SciPy/pandas requirements and no new installation step. Existing
+IBKR acquisition still requires the manually installed SDK and logged-in TWS;
+subsequent analysis is offline. These helpers are small, inspectable starting
+points; users retain responsibility for deeper analysis and interpretation.
+
+**Daily correlations:** `pyibquant.studies.daily_correlations(collection)` exports
+close-to-close log returns and a descriptive Pearson matrix. Returns are computed
+on adjacent dates in the union of observed starts, then rows missing any instrument
+are excluded from the matrix (listwise selection). This avoids pairing an
+instrument's multi-day return across a missing date with another's one-day return.
+The full return table retains missing values and endpoints; sample/exclusion counts
+and source quality reports accompany the matrix. Constant or insufficient samples
+produce null correlations, including on the diagonal. No prices are filled and
+no currency or adjustment conversion is performed. Common gaps absent from all
+inputs remain unknown without an external expected calendar.
+
+```sh
+python examples/research_collection.py fetch AAPL MSFT SPY \
+  --start 2025-01-01 --end 2026-01-01 \
+  --output charts/studies/daily.collection.json
+python examples/research_studies.py correlations charts/studies/daily.collection.json \
+  --output charts/studies/correlations.json
+```
+
+**Intraday scaling preparation:** `pyibquant.studies.intraday_scaling(dataset,
+lags=(1, 2, 4, 8), session_timezone="America/New_York")` exports log-price increments
+and mean absolute/squared increments by lag. Lags count input bars; five-minute
+inputs with lags 1/2/4/8 represent 5/10/20/40 minutes. Every intermediate bar must
+exist on the exact grid, and sequences break at local date changes. There is no
+interpolation, gap bridging or overnight mixing. Supply the timezone explicitly
+when it is not recorded; ordinary requests without session enrichment may leave it
+unknown. The stated timezone and filtering rule are saved in the result.
+
+```sh
+python examples/research_collection.py fetch AAPL --interval 5min \
+  --start 2026-10-12 --end 2026-10-16 \
+  --output charts/studies/intraday.collection.json
+python examples/research_studies.py scaling charts/studies/intraday.collection.json \
+  --instrument AAPL --session-timezone America/New_York --lags 1 2 4 8 \
+  --output charts/studies/scaling.json
+```
+
+The increment is `log(close_at_end) - log(close_at_start)`; timestamps identify
+source bar starts, and the elapsed lag matches the separation of those starts.
+Increments overlap, so samples are dependent. Local date filtering is not an
+exchange-session calendar: it does not detect every session break or certify
+bar finality. Moments are descriptive; no exponent fitting, Hurst estimation,
+statistical significance or multifractality conclusion is supplied. These choices
+remain user-owned. Empty lag samples have null moments. Both starters reject
+nonpositive closes and empty/incomplete/unknown-download inputs; source quality
+unknowns remain visible and unchanged.
+
+Verified against fresh TWS history: 250 daily bars each for AAPL/MSFT/SPY in 2025
+produced 249 shared return observations; four completed AAPL sessions of five-minute
+bars produced 312 input bars and 308/304/296/280 increments at lags 1/2/4/8.
+Generated datasets/reports remain ignored; acquire your own bounded inputs with
+the commands above. No price history or computed matrix is bundled with the package.
 
 ### Selected-option historical research
 
@@ -468,6 +699,118 @@ Both strategies were run offline on the saved 78-bar AAPL option datasets from
 TWS, using TRADES and MIDPOINT independently. Accounting reconciliation and input
 fingerprint preservation passed. This validates the workflow, not strategy quality
 or historical executability. No new broker request is required for backtesting.
+
+### Strategy-driven backtesting tools
+
+Use `pyibquant.simulation` for custom strategies. The existing `backtest_equity()`
+and `backtest_option()` interfaces retain their fixed-size signal-array behavior.
+The general engine supports explicit equity/option feeds, shared USD cash,
+variable whole quantities, scaling in/out and partial exits. It runs offline from
+frozen datasets, without TWS, the SDK, pandas or a chart.
+
+```python
+from datetime import date
+from pyibquant import BarDataset
+from pyibquant.research import above_sma
+from pyibquant.simulation import Feed, NextOpen, TargetStrategy, simulate
+
+dataset = BarDataset.load("charts/research/bars.dataset.json")
+
+def target(context):
+    closes = [bar.close for bar in context.data["equity"].bars]
+    return 2 if above_sma(closes, window=20)[-1] else 0
+
+result = simulate(
+    {"equity": Feed(dataset, finalized_through=date(2025, 12, 31))},
+    TargetStrategy("equity", target),
+    execution=NextOpen(commission=1, slippage_bps=5),
+    strategy_settings={"name": "above_sma", "window": 20, "quantity": 2},
+)
+result.save("charts/strategy-backtest/results.json")
+```
+
+The extension points are deliberately small:
+
+- **Strategy:** implement `on_bar(context)` and keep state on your strategy object.
+  The callback receives only completed histories, immutable portfolio/order/fill
+  snapshots, instrument identities, `timestamp` and the keys in `updated`.
+  `context.data[key].latest`, `.available_at` and `.age` expose unavailable/stale
+  data. Several instruments completing together trigger one callback. Their keys
+  are sorted, independent of input mapping order.
+- **Orders:** `context.submit(key, "buy" | "sell", quantity, tag=...)` returns an ID;
+  `context.cancel(id)` cancels a pending order. Orders move through pending,
+  filled, rejected or canceled states. Only market orders/full fills are currently
+  supported; unsupported instructions fail explicitly. Orders compete in submission
+  order with no implicit cash/position reservation. Insufficient cash or holdings
+  rejects that order; strategies decide whether to retry. Remaining pending orders
+  are canceled at the end with `reason="end_of_data"`.
+- **Execution:** implement `execute(order, instrument, opening, portfolio)` and
+  `settings()`. Return `Execution(price, commission)` for a full fill or `None` to
+  defer until a later supplied open. `opening` exposes only the opening timestamp
+  and price, excluding that bar's future high/low/close/volume. Invalid prices and
+  fees fail the run. `NextOpen` provides adverse bps slippage, a flat fee and a
+  per-share/contract fee. Costs are assumptions, not an IBKR commission schedule.
+  Reported slippage is signed against the supplied open; price improvement from
+  a custom model produces negative slippage cost.
+- **Ledger/results:** the engine owns cash, positions and weighted-average cost
+  basis, including entry fees. Partial sales allocate basis proportionally. Resolved
+  multipliers scale option premiums and marks. Immutable snapshots expose average
+  price, cost basis, realized/unrealized P&L and mark timestamps. Results include
+  orders, fills, position/equity/return/drawdown history, basic metrics, exact input
+  fingerprints/metadata and supplied strategy/model settings. Save exact datasets
+  alongside results for reproducibility; strategy code/external inputs remain yours.
+
+At each timestamp the engine publishes completed bars and invokes the strategy,
+then processes opens at that timestamp. A decision may fill at an adjacent next
+open, never at the earlier open of its own signal bar. Intraday bar completion is
+`start + interval`; the finality assertion must cover that completion time. Unequal
+intraday intervals and gaps are supported; only actual supplied opens can fill
+orders. Histories retain stale closes with explicit ages. Portfolio marks update
+on observed opens/closes and retain their last value when a feed goes quiet.
+Equity history records separate `close` and `open` phases so boundary jumps and
+costs contribute to drawdown. Dates alone do not establish exchange session times:
+daily feeds use synthetic UTC calendar-day events and cannot mix with intraday
+feeds. The engine does not infer holidays, shortened sessions or gap completeness.
+
+`Feed(..., expected_starts=tuple(...))` optionally audits exact starts against an
+independently supplied calendar; finality and coverage assertions are saved.
+Inputs require complete fixed-range USD datasets, positive consistent OHLC, and
+supported daily/intraday intervals. Equities use split-adjusted TRADES, multiplier
+one. Options require exact identity/multiplier and intraday TRADES/MIDPOINT.
+Duplicate instrument aliases, overlapping bars and simulation horizons crossing
+an option's New York expiry date are rejected. Pre-expiry saved data works after
+expiry; current wall-clock time does not restrict offline analysis.
+
+`TargetStrategy(traded_key, target, decision_feed="underlying")` evaluates a target
+quantity whenever the underlying completes a bar, even if the traded option has
+a different interval. It owns pending orders for the traded instrument, cancels
+them before recalculating, and submits the quantity difference. To combine several
+independent order rules, implement `on_bar` directly instead. User strategies and
+custom execution models remain responsible for lookahead in their own code or
+external inputs; this is an interface boundary, not a Python security sandbox.
+
+Run the saved-input example for equity, or add a selected option and use the
+underlying's completed closes as its signal:
+
+```sh
+python examples/backtest_strategy.py charts/research/bars.dataset.json \
+  --finalized-through 2025-12-31 --quantity 2 --commission-per-unit 0.5
+python examples/backtest_strategy.py charts/underlying/bars.dataset.json \
+  --option-dataset charts/option-history/bars.dataset.json \
+  --finalized-through 2026-10-16T16:00:00-04:00 --commission-per-unit 0.65
+```
+
+The second example needs intraday underlying inputs covering the option experiment.
+The example defaults to requiring a signal updated at the decision timestamp;
+`--max-signal-age-minutes` permits an explicit age tolerance. Missing/stale signals
+target zero, requesting an exit at the next supplied traded open. It saves both
+inputs and JSON results/settings/logs under ignored `charts/strategy-backtest/`.
+
+This foundation is long-only, cash-funded and single-currency. Default fills are
+synthetic; spread, liquidity, partial fills, limit/stops, margin, shorting, FX,
+dividends, settlement and option expiry/exercise/assignment remain outside the
+supported model. There is no forced final liquidation. Intricate decision logic
+can use the interfaces; new instrument/accounting semantics require engine support.
 
 ### Stock and option quote snapshots
 
@@ -936,3 +1279,42 @@ execution before using the software with real capital.
 
 PyIBQuant is an independent open-source project and is not affiliated with,
 endorsed by, or sponsored by Interactive Brokers LLC.
+
+## Local development snapshot
+
+The current development version is `0.1.0.dev1`; see [changes](CHANGELOG.md) and
+[the Python API guide](docs/API.md). This is a local development build, without
+publication or a stable API guarantee.
+
+```sh
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check src examples tests
+.venv/bin/mypy
+.venv/bin/python tests/build_check.py
+```
+
+The build check uses existing setuptools/pip with no network downloads. It builds
+a source archive, builds the wheel from that archive, verifies documented examples
+and assets, and runs `tests/wheel_smoke.py` plus CLI checks in an isolated environment
+without the SDK or optional packages. Validated `.tar.gz`, `.whl` and SHA-256
+checksums go under ignored `dist/`. Source archives include guides, examples and
+validation scripts; generated datasets and virtual environments remain excluded.
+Browser regressions additionally require installed Chrome and the `[browser]` tools.
+This checkpoint is locally validated on Python 3.14; other declared Python 3.11+
+versions have not been exercised as a release matrix.
+
+For an explicit data-only broker regression (choose an available unexpired option
+and completed, aligned bounds):
+
+```sh
+.venv/bin/python tests/live_workflow_check.py \
+  --option-expiry 2026-11-20 --option-strike 340 --trading-class AAPL --multiplier 100 \
+  --intraday-start 2026-10-16T09:30:00-04:00 --intraday-end 2026-10-16T16:00:00-04:00
+```
+
+It uses a separate client, closes its connection after bounded acquisition, then
+checks offline save/reload, quality reports, both study starters, equity/option/
+strategy simulation and HTML generation. Generated results stay under ignored
+`charts/release-workflow-check/`. Running it does not place orders or change TWS
+settings. Restricted execution environments may need local socket permission even
+when TWS is already connected and listening.
