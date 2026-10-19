@@ -1,6 +1,6 @@
 # PyIBQuant development roadmap
 
-Last reconciled: 2026-10-16. Checkboxes describe implemented behavior, not a release promise.
+Last reconciled: 2026-10-19. Checkboxes describe implemented behavior, not a release promise.
 The full project direction remains in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
@@ -10,15 +10,41 @@ shared cash/positions with variable sizing and partial exits, and reproducible
 results. Existing fixed-size equity/option APIs retain their behavior. Named
 scientific datasets, quality reports and small daily/intraday study starters are
 also implemented. The local 0.1.0.dev1 snapshot packages these foundations with
-an API guide, source-distribution examples and reusable validation scripts. Strategy comparisons and performance
+an API guide, source-distribution examples and reusable validation scripts.
+Release preparation is complete at checkpoint `f0f79a6`. Next: two reproducible
+worked studies using the delivered helpers. Strategy comparisons and performance
 reports remain part of the backtesting backlog.
 
 Historical acquisition supports all four TRADES/MIDPOINT/BID/ASK sources and was
-verified after hours against TWS, including cache reuse. Current validation:
-497 tests, typing/style checks and a clean SDK-free wheel smoke check pass. The
-previous chart browser regression passed; this slice changes no chart code.
+verified after hours against TWS, including cache reuse. Recorded validation at
+the development checkpoint: 497 tests, typing/style checks, a clean SDK-free build,
+the TWS end-to-end workflow and three offline Chrome regressions passed.
 Live recording, bulk collection and external providers are not required. The
 obsolete recording/rotation/replay stack and recorded-quote simulator were removed.
+
+## Next milestone — two reproducible worked studies
+
+The study helpers and terminal examples are implemented. The next deliverables
+are documented scientific examples using those tools, rather than new estimators.
+
+- [x] Complete API/documentation review, regression and local `0.1.0.dev1` build
+- [ ] Work through the terminal workflows manually and record usability findings
+- [ ] Document a daily correlation study: question, explicit instrument universe,
+  dates, sampling/source choices, aligned return periods and descriptive results
+- [ ] Document an intraday scaling study: question, selected instrument, dates,
+  interval/timezone, lag choices, gap/date exclusions and descriptive moments
+- [ ] Include exact acquisition/offline commands, frozen-input fingerprints,
+  quality evidence and interpretation limits in each study; keep generated data
+  outside Git and make clear that fresh IBKR data may differ from frozen inputs
+- [ ] Improve calendar inputs, session filtering or exports only if those studies
+  demonstrate a concrete need; retain the dependency-free starting workflows
+- [ ] Validate Python 3.11–3.13 compatibility before a public release; only Python
+  3.14 has been exercised in the local development checks
+
+Acceptance: a reader can acquire bounded inputs, inspect their limitations, save
+them, and rerun each analysis offline from the same frozen collection. Neither
+example should claim causality, statistical significance or multifractality from
+the starter calculations. Advanced estimators and paper trading remain later work.
 
 ## Goal and scope
 

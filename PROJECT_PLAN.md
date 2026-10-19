@@ -45,8 +45,15 @@ multiplier and per-contract costs. A general bar-driven simulator now adds user
 strategy callbacks, multiple explicit instruments, variable sizing/partial exits,
 market-order lifecycle, replaceable execution and a shared USD portfolio ledger.
 Named scientific datasets, quality reports and small dependency-free study
-starters are implemented. Current milestone: review, regression and a local
-development snapshot; advanced analysis remains user-owned.
+starters are implemented. API/documentation review, end-to-end regression and the
+local `0.1.0.dev1` development snapshot are complete (checkpoint `f0f79a6`).
+Next milestone: two reproducible worked studies using the existing daily
+correlation and intraday scaling helpers. Each should document its question,
+instruments, date range, sampling choices, data-quality evidence, commands and
+interpretation limits. The helpers and runnable scripts already exist; the next
+work is to turn them into documented scientific examples and identify practical
+workflow improvements. Advanced analysis remains user-owned. See the
+[next-milestone checklist](TODO.md#next-milestone--two-reproducible-worked-studies).
 Broker-connected paper execution
 remains planned.
  [TODO.md](TODO.md) orders the work.

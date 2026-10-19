@@ -1,6 +1,7 @@
 # Development handoff
 
-Checkpoint: 2026-10-16. The primary workflow is on-demand IBKR historical data →
+Documentation reviewed: 2026-10-19. Implementation/release baseline: 2026-10-16,
+Git checkpoint `f0f79a6`. The primary workflow is on-demand IBKR historical data →
 Python research → backtesting. Selected-option historical acquisition is implemented;
 a first single-contract historical-bar option backtest is also implemented.
 The basic strategy-driven bar simulator is now implemented (see checkpoint below).
@@ -8,6 +9,25 @@ Named scientific datasets, quality reports and lightweight study starters are de
 The current local development snapshot is 0.1.0.dev1; see docs/API.md and CHANGELOG.md.
 Do not require live recording, a large local archive or external historical-data
 providers. Research/backtesting comes before broker-connected paper execution.
+
+## Where to resume
+
+API/documentation review, the end-to-end checks and the local `0.1.0.dev1` build
+are complete. The validation results below are historical checkpoint evidence;
+this documentation reconciliation does not represent a new test or TWS run.
+
+Next: create two documented worked studies using the existing
+`examples/research_collection.py` and `examples/research_studies.py` workflows:
+daily correlations and intraday scaling preparation. Record each question,
+instrument/date/sampling choices, quality limitations, commands, input fingerprints
+and interpretation. Manually review the workflows and let concrete findings drive
+any further preparation changes. No additional scientific dependencies or advanced
+estimators are required for this milestone.
+
+See [the next-milestone checklist](TODO.md#next-milestone--two-reproducible-worked-studies).
+Python 3.11–3.13 validation remains pending before public release; only Python 3.14
+has been checked locally. Existing release artifacts belong to the implementation
+checkpoint; rebuild with `tests/build_check.py` when incorporating later doc changes.
 
 ## Cleanup checkpoint
 
