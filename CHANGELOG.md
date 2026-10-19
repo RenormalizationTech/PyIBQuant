@@ -4,6 +4,9 @@
 
 Local development snapshot; no published release is implied.
 
+- Add an optional daily US stock/ETF Yahoo chart preview (`.[yahoo]`,
+  `--provider yahoo --interval 1d`) with explicit source/adjustment warnings.
+  IBKR remains the default; connection/SDK failures suggest switching explicitly.
 - Add strategy-driven daily/intraday portfolio simulation: multiple explicit feeds,
   completed-bar callbacks, shared USD cash, whole long quantities, scaling/partial
   exits, cancellable market orders and replaceable execution models.

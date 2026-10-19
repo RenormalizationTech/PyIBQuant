@@ -26,8 +26,10 @@ The primary workflow is **on-demand IBKR historical data → Python research →
 backtesting**, for equities/ETFs and selected options. The software should not
 require users to record live markets or build a large local options archive.
 Request only the contracts/date ranges needed for an experiment. Optional caching
-and saved experiment inputs support repeatability; continuous collection and
-external historical-data providers are outside the current scope.
+and saved experiment inputs support repeatability. Continuous collection and
+external historical research providers are outside the current scope, except for
+the optional daily Yahoo chart preview described below. IBKR remains the intended
+data provider for the package.
 
 Equity/ETF historical queries, paging/pacing, exports, frozen datasets and simple
 returns/SMA research are implemented, together with a first daily equity backtest.
@@ -107,6 +109,52 @@ Use a unique client ID for each concurrent API application. Defaults are
 `127.0.0.1:7497`, client ID `71`. Data permissions depend on the instrument and
 your IBKR subscriptions; historical bars and live updates can require different
 permissions. Delayed data is not substituted automatically.
+
+### Optional Yahoo chart preview without TWS
+
+IBKR is the default data source. If TWS/Gateway is unavailable, the chart command
+reports the connection error and suggests an explicit Yahoo preview; it never
+switches providers automatically. The preview is a temporary convenience for
+exploring the chart, not an alternative IBKR research/backtesting workflow.
+
+Install the optional dependency and request a daily US stock/ETF snapshot:
+
+```sh
+python -m pip install -e '.[yahoo]'
+pyibquant chart AAPL --provider yahoo --interval 1d --duration '1 Y'
+```
+
+The preview needs internet access but no TWS, IBKR SDK, subscription or API key.
+The chart identifies **Yahoo Finance · Preview** and displays its limitations.
+`--output` and `--no-browser` work as usual. Only `--interval 1d` is supported;
+duration accepts positive `D`, `W`, `M` or `Y` calendar lookbacks. The current
+session date is included when available and may be incomplete. There are no live
+updates, interactive symbol switching/older-page downloads, session schedules,
+extended-hours bars, options or IBKR cache integration in this preview.
+
+The adapter uses single-symbol `yfinance.Ticker.history()` OHLCV, converts daily
+index values to session dates, and explicitly enables split/dividend adjustment.
+These prices differ from IBKR's split-only research inputs. Coverage and accuracy
+are unverified; missing/nonfinite price rows are skipped with a warning, missing
+volume remains null, and empty results fail visibly. Download completeness is
+left unknown. The existing backtest adjustment requirements are unchanged.
+
+`yfinance` is unofficial and uses Yahoo's public endpoints for personal research;
+access may fail or be rate limited. See its
+[documentation and usage terms](https://ranaroussi.github.io/yfinance/).
+It is imported only when explicitly selecting the preview. Installing the base
+package does not install `yfinance`, pandas or NumPy.
+
+To explicitly validate live downloads and the preview UI (requires `.[yahoo,browser]`
+and installed Google Chrome):
+
+```sh
+.venv/bin/python tests/live_yahoo_check.py --browser
+```
+
+This checks three live symbols, OHLCV conversion, CSV/dataset persistence, invalid
+inputs, CLI errors and chart interactions. Reports and screenshots are saved under
+ignored `charts/yahoo-validation/`; normal unit tests never contact Yahoo.
 
 ### Python research exports
 

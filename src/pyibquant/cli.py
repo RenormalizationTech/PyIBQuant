@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 
 from .data.cache import HistoricalCache, default_cache_dir
-from .errors import PyIBQuantError
+from .errors import ConnectionError, PyIBQuantError
 from .market import Market
 
 
@@ -17,6 +18,10 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     chart = sub.add_parser("chart", help="Chart a US stock or ETF")
     chart.add_argument("symbol")
+    chart.add_argument(
+        "--provider", choices=["ibkr", "yahoo"], default="ibkr",
+        help="Data source; yahoo is an optional daily historical preview only",
+    )
     chart.add_argument(
         "--interval",
         default="1min",
@@ -60,6 +65,21 @@ def main() -> int:
             else:
                 print(f"Removed {store.clear()} historical cache entries from {store.directory}")
             return 0
+        if args.provider == "yahoo":
+            if args.interval != "1d" or args.live or args.extended_hours or args.primary_exchange:
+                raise ValueError(
+                    "Yahoo preview supports daily US stock/ETF snapshots only: use --interval 1d "
+                    "without --live, --extended-hours or --primary-exchange"
+                )
+            if args.cache or args.cache_dir or args.refresh_cache:
+                raise ValueError("Yahoo preview does not support IBKR cache flags")
+            from .data.providers.yahoo import preview_bars
+
+            bars = preview_bars(args.symbol, duration=args.duration, timeout=args.timeout)
+            print(bars.warnings[0], file=sys.stderr)
+            print(f"Received {len(bars)} preview bars for {bars.symbol}", flush=True)
+            print(bars.plot(args.output, open_browser=not args.no_browser))
+            return 0
         cache_dir = (
             None
             if args.no_cache
@@ -94,6 +114,17 @@ def main() -> int:
         return 0
     except (PyIBQuantError, ImportError, ValueError, OSError) as exc:
         print(f"pyibquant: {exc}", file=sys.stderr)
+        if (args.command == "chart" and args.provider == "ibkr"
+                and isinstance(exc, (ConnectionError, ImportError))):
+            command = shlex.join([
+                "pyibquant", "chart", args.symbol, "--provider", "yahoo", "--interval", "1d",
+                "--duration", "1 Y",
+            ])
+            print(
+                "For an optional daily Yahoo historical preview without TWS:\n"
+                "  python -m pip install -e '.[yahoo]'\n"
+                f"  {command}", file=sys.stderr,
+            )
         return 1
     except KeyboardInterrupt:
         return 130
