@@ -10,7 +10,9 @@ market-data permissions needed for the requested instruments. Implemented featur
 include market data, frozen datasets, research calculations, daily equity
 backtests, a strategy-driven portfolio simulator, stock/option quotes and interactive charts.
 Read-only paper-account monitoring and an experimental paper broker/strategy runner
-are implemented; actual order integration validation is pending.
+are implemented. Bounded AAPL strategy execution, same-day restart, cancellation
+and disconnect-after-send recovery have owner-run paper validation. Selected-option
+buy/sell and cancellation are also validated; automated option strategies remain open.
 
 ## Project documents
 
@@ -46,7 +48,9 @@ instruments sharing cash, variable sizing/partial exits, cancellable market orde
 and replaceable execution models. Named multi-instrument datasets, quality reports
 and two lightweight scientific study starters are also implemented.
 Paper account monitoring and persistent performance/order history are implemented.
-Paper execution and its runner remain experimental pending strategy/recovery integration testing; see [the staged plan](PROJECT_PLAN.md#24-phase-6--algorithmic-paper-trading-and-account-performance).
+Paper execution and its runner remain experimental beyond the validated bounded
+checks: automatic broker reconnect, multi-session recovery, settlement accounting
+and execution corrections remain open; see [the staged plan](PROJECT_PLAN.md#24-phase-6--algorithmic-paper-trading-and-account-performance).
 Historical bars do not supply quote receipt times,
 quote sizes or historical Greeks.
 
@@ -66,7 +70,8 @@ workspaces, watchlist UI, drawing tools and indicator panes are outside project
 scope. Visualization work serves concrete research/backtest results and account
 performance/order tracking.
 Read-only paper-account state and performance tracking work through the API.
-The owner has validated paper sells and a one-share AAPL buy; strategy execution and recovery remain experimental. Options research/backtesting
+The owner has validated bounded AAPL strategy runs, explicit same-day recovery,
+strategy-owned flattening and selected-option order/cancellation checks. Options research/backtesting
 is a major product direction and the owner's primary interest; prioritize a usable
 historical research workflow, now followed by paper execution and account performance.
 

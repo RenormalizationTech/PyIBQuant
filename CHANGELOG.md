@@ -4,6 +4,13 @@
 
 Local development snapshot; no published release is implied.
 
+- Record October 20 owner-run validation of bounded AAPL strategy execution,
+  same-day restart, execution controls, owned flattening, disconnect-after-send
+  exact-ID recovery, and selected-option buy/sell and unfilled cancellation.
+  Exact-identity completed-order recovery is integrated. Settlement calendars,
+  execution corrections, automatic broker reconnect, multi-session recovery and
+  automated option strategies remain open.
+
 - Reconcile the end-of-day paper validation checkpoint and private-data index.
   Replace the superseded combined integration order check with read-only account
   acquisition; keep human execution in the separate strategy/cancellation examples.
@@ -68,8 +75,9 @@ Local development snapshot; no published release is implied.
   keys, partial-fill/fee callbacks and conservative broker-based USD funding checks.
 - Add a bounded completed-bar above-SMA runner with observation-only default,
   explicit controls, fresh-data checks, loss/position/order limits and no blind retries.
-  Broker account monitoring and live-data observation are verified; actual order
-  integration validation remains pending. Real-money execution is disabled.
+  Broker account monitoring, live-data observation and bounded order integration
+  are verified; broader recovery/accounting remains unfinished. Real-money execution
+  is disabled.
 - Add an optional daily US stock/ETF Yahoo chart preview (`.[yahoo]`,
   `--provider yahoo --interval 1d`) with explicit source/adjustment warnings.
   IBKR remains the default; connection/SDK failures suggest switching explicitly.

@@ -54,7 +54,8 @@ threshold and 600 seconds; stop can retain filled inventory.
 
 Latest code validation: 795 tests, Ruff, mypy (41 source files), whitespace,
 source archive/wheel and SDK-free smoke/CLI pass. Subsequent edits only record
-acceptance/documentation. Code and docs remain local, uncommitted and unpushed.
+acceptance/documentation. The recorded stop checkpoint preceded commit `986fc9b` (`paper trading finished`).
+Consult current Git status for subsequent local changes and push state.
 The detailed evidence and remaining broader roadmap follow below.
 
 Cleanup at stop: removed project test/type/lint and Python bytecode caches, the

@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation checkpoint — 2026-10-16
+## Implementation checkpoint — 2026-10-20
 
 The initial IBKR-to-chart slice is implemented, with live bar updates and browser
 symbol/interval/history and regular/extended-hours controls. Chart foundations now
@@ -48,15 +48,18 @@ market-order lifecycle, replaceable execution and a shared USD portfolio ledger.
 Named scientific datasets, quality reports and small dependency-free study
 starters are implemented. API/documentation review, end-to-end regression and the
 local `0.1.0.dev1` development snapshot are complete (checkpoint `f0f79a6`).
-Next milestone (priority updated 2026-10-19): algorithmic paper trading with
-persistent account performance and order tracking. Start with account observation,
-then broker order lifecycle/reconciliation and a controlled strategy runner.
+Current milestone: algorithmic paper trading with persistent account performance
+and order tracking. Account observation, bounded AAPL strategy execution, explicit
+same-day restart/recovery, cancellation and selected-option lifecycle checks are
+validated. Settlement accounting, execution corrections, automatic broker reconnect,
+multi-session recovery and automated option strategies remain open.
 See [the staged paper-trading plan](#24-phase-6--algorithmic-paper-trading-and-account-performance).
 The two worked scientific studies remain a subsequent milestone; their helpers
 already exist. Advanced analysis remains user-owned.
  [TODO.md](TODO.md) orders the work.
 [HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where to resume.
-Later phases below remain plans, not implemented APIs.
+Phase checklists distinguish delivered foundations from remaining scope. Target
+API sketches are design examples; docs/API.md describes supported public APIs.
 
 # 1. Vision
 
@@ -1016,7 +1019,7 @@ Python User
 - [x] connection configuration
 - [x] contract resolution
 - [x] historical bar requests
-- [x] live bar updates via historical-data subscription (continuous tick quote subscriptions remain future work)
+- [x] live bar updates via historical-data subscription; independent Level-one quote streams also implemented
 - [x] normalized timestamps
 - [x] canonical bar representation
 - [x] structured exceptions
@@ -1142,15 +1145,15 @@ records = aligned.to_records()
 
 ### TODO
 
-- [ ] minimal strategy interface
-- [ ] positions
-- [ ] orders
-- [ ] cash
-- [ ] portfolio accounting
-- [ ] commissions
-- [ ] simple slippage
-- [ ] trade history
-- [ ] performance metrics
+- [x] minimal strategy interface
+- [x] positions
+- [x] orders
+- [x] cash
+- [x] portfolio accounting
+- [x] commissions
+- [x] simple slippage
+- [x] trade history
+- [x] performance metrics
 - [ ] visualize trades on existing charts
 
 Do not attempt to simulate an entire exchange.
@@ -1172,7 +1175,8 @@ baseline, returns paused and reconciles before explicit resume. Account reports
 include fill-derived per-run P&L, costs, exposure and observed dollar drawdown with
 offline journal replay and CSV exports. Completed-order recovery, corrections,
 broker restart integration and strategy execution across sessions remain acceptance work.
-Unchecked items below describe the full acceptance scope, including those gaps.
+The October 20 checkpoint below supersedes this initial status. Unchecked items
+describe remaining scope, including partially implemented requirements.
 
 Bounded-equity acceptance checkpoint 2026-10-20: the owner completed a ten-minute
 AAPL run with fills, then restarted/resumed its process while preserving fill
@@ -1181,7 +1185,11 @@ share; a fifth submission was blocked. A separate resting-order check then passe
 broker acknowledgment, unfilled cancellation, flat reconciliation and released
 pending reservation. The initial saved-profile/preflight/execution/reporting setup
 is validated. Broader multi-session, broker-restart, correction and settlement
-edge-case requirements below remain separate from this bounded acceptance.
+edge-case requirements below remain separate from this bounded acceptance. Later
+October 20 checks also validated a 30-minute AAPL run, execution pause/resume,
+disconnect-after-send exact-ID recovery without replacement, owned flattening,
+exact-identity completed-order recovery, and selected long-option buy/sell and
+unfilled cancellation. Automated option strategies remain unimplemented.
 
 ## Outcome and boundaries
 
@@ -1190,9 +1198,10 @@ and inspect persistent cash, net liquidation value and P&L histories. Account an
 order performance charts are part of trading observability. The standalone
 charting-platform backlog remains removed.
 
-Start with one selected paper account, USD reporting, one US equity/ETF and whole
-shares, long/flat. Validate the shared broker lifecycle before adding single-leg
-options with resolved identity/multiplier, limit prices and expiry restrictions.
+The validated runner uses one selected paper account, USD reporting, one US equity
+and whole shares, long/flat. Selected long-option limit orders now reuse the shared
+broker lifecycle with resolved identity/multiplier and expiry restrictions; they
+do not yet have an automated strategy runner.
 Existing positions in any instrument must remain visible even when the first
 runner cannot trade them. Multi-leg options, shorting, margin strategies and live
 accounts require later scope. Do not liquidate pre-existing positions implicitly.
@@ -1200,10 +1209,10 @@ accounts require later scope. Do not liquidate pre-existing positions implicitly
 ## Architecture
 
 Keep `Market` and its data-only adapter separate from a broker connection with a
-dedicated client ID. Proposed modules are `broker.py` (public immutable state and
+dedicated client ID. Implemented modules include `broker.py` (public immutable state and
 commands), `trading/ibkr.py` (SDK adapter), `trading/journal.py` (durable events),
 `trading/runner.py` (strategy orchestration) and `trading/performance.py` (reports).
-These modules now contain the initial implementation; see docs/API.md for supported
+These modules contain the implementation; see docs/API.md for supported
 entry points and experimental execution limitations.
 
 The broker owns account subscriptions, order IDs, order/fill state and recovery.
@@ -1232,7 +1241,7 @@ reported type. A margin paper account must not silently supply margin capacity t
 a strategy intended for a cash account. Start with an explicit settled-cash-only,
 no-borrowing policy; support a margin policy separately if requested.
 
-- [ ] P1: capture account type, total cash, settled cash, available funds and buying
+- [x] P1: capture account type, total cash, settled cash, available funds and buying
   power distinctly, including currency, timestamps, source and missing-field status.
   Account value and total cash alone are not an executable spending budget.
 - [ ] P2: evaluate spendable funds before every new order or quantity/price increase.
@@ -1258,7 +1267,7 @@ no-borrowing policy; support a margin policy separately if requested.
   excess liquidity and configured exposure/borrowing limits. Unsettled proceeds are
   not universally blocked in a margin account. Broker acceptance remains decisive;
   local checks cannot guarantee acceptance or simulate all house restrictions.
-- [ ] Show total, settled, unsettled and locally reserved cash plus usable strategy
+- [x] Show total, settled, unsettled and locally reserved cash plus usable strategy
   budget in the account report; label local estimates and incomplete coverage.
 - [ ] Test same-day sell/rebuy blocking under cash-only policy, unused settled-cash
   purchases, next-business-day release, holidays, fees, two simultaneous orders,
@@ -1287,21 +1296,21 @@ local settlement ledger and advanced margin policy remain plans.
 
 ## P1 — Account observation and durable performance history
 
-- [ ] Discover managed accounts, select one explicitly and establish its paper
+- [x] Discover managed accounts, select one explicitly and establish its paper
   identity from the configured paper session/account mapping. A port number or
   account-name prefix alone is not proof; reject ambiguity and live targets.
-- [ ] Download initial account values, positions and visible orders with explicit
+- [x] Download initial account values, positions and visible orders with explicit
   completion barriers. Report partial/timeout states rather than an empty portfolio.
-- [ ] Subscribe to account values and account P&L; retain currency, source, receipt
+- [x] Subscribe to account values and account P&L; retain currency, source, receipt
   timestamps and per-field freshness. Normalize unset values to missing, never zero.
-- [ ] Capture cash (`TotalCashValue`), net liquidation value, available funds,
+- [x] Capture cash (`TotalCashValue`), net liquidation value, available funds,
   buying power, gross position value, daily/realized/unrealized P&L and positions.
   Keep currencies distinct and use broker base-currency totals for account charts.
-- [ ] Persist raw normalized events and materialized snapshots transactionally in
+- [x] Persist raw normalized events and materialized snapshots transactionally in
   a local standard-library SQLite journal outside Git. Use schema versions,
   session IDs, account IDs, sequence numbers and UTC timestamps; mask account IDs
   in shareable reports. Flush on orderly stop and recover after interrupted writes.
-- [ ] Show cash and account-value curves, separate P&L curves, current positions,
+- [x] Show cash and account-value curves, separate P&L curves, current positions,
   visible open orders and connection/freshness status in a focused localhost view;
   provide offline HTML/CSV reporting from the same persisted history.
 
@@ -1321,22 +1330,23 @@ summed into a fictitious cumulative curve. Start a new baseline after paper rese
 
 ## P2 — Paper order lifecycle and reconciliation
 
-- [ ] Allocate IDs from `nextValidId` and observed order IDs, persist local intent
+- [x] Allocate IDs from `nextValidId` and observed order IDs, persist local intent
   before sending, and track account/client/order ID, broker permanent ID, order
   reference, strategy ID and run ID. Market-data request counters are not order IDs.
-- [ ] Submit/cancel DAY market and limit orders for the initial equity scope;
+- [x] Submit/cancel DAY limit orders for the initial equity scope; provide explicit
+  holding-only market sells (market buys remain unsupported);
   preserve broker acknowledgement, held/rejected/inactive reasons, partial fills,
   remaining quantity, execution IDs and late commission/fee reports.
 - [ ] Deduplicate callbacks and executions; tolerate missing/repeated/out-of-order
   status updates and execution corrections. Submission success is not a fill.
   A cancellation request is not cancellation confirmation; fills may race it.
-- [ ] Separate account-wide visibility from strategy-owned orders. Report which
+- [x] Separate account-wide visibility from strategy-owned orders. Report which
   clients/manual orders are visible and which are controllable; never imply a
   snapshot of all open orders grants cancellation rights or continuous coverage.
 - [ ] At start/reconnect, reconcile open/completed orders, available executions and
   positions before enabling submissions. Missing historical coverage stays explicit.
   Ambiguous send outcomes enter an unresolved state; never blindly resubmit them.
-- [ ] Add order/fill tables and timestamped submission/fill/cancel/rejection events
+- [x] Add order/fill tables and timestamped submission/fill/cancel/rejection events
   to performance reports, including fees, strategy/run filters and position changes.
 
 Acceptance: a bounded paper buy/sell round trip reconciles with TWS executions and
@@ -1346,18 +1356,18 @@ Record actual effects and final holdings rather than assuming every test fills.
 
 ## P3 — Strategy runner and explicit controls
 
-- [ ] Independent bar subscriptions, completed-bar events and caller-visible
+- [x] Independent bar subscriptions, completed-bar events and caller-visible
   session/calendar/late-update policy; warmup bars must never trigger stale orders.
-- [ ] Run one already backtested intraday equity strategy with explicit quantity,
+- [x] Run one already backtested intraday equity strategy with explicit quantity,
   symbol, session hours, parameters and starting holdings policy.
 - [ ] Process live partial fills and outstanding orders when converting target
   positions into new orders; prevent duplicate decisions for one completed bar.
-- [ ] Implement start, pause, stop and cancel-owned-orders separately. Stop blocks
+- [x] Implement start, pause, stop and cancel-owned-orders separately. Stop blocks
   new decisions; cancellation is explicit; flattening is a separate command.
-- [ ] Enforce configured order quantity/notional, position/exposure, outstanding
+- [x] Enforce configured order quantity/notional, position/exposure, outstanding
   order and submission-rate limits; evaluate fresh account/data state and reject
   delayed/frozen/stale decision inputs. Daily-loss limits use a defined P&L baseline.
-- [ ] On disconnect, stale data or reconciliation mismatch, pause new submissions.
+- [x] On disconnect, stale data or reconciliation mismatch, pause new submissions.
   Reconcile before an explicit resume. Journal configuration, code version,
   signals, risk decisions, order intents and resulting broker events.
 
@@ -1369,12 +1379,13 @@ A profitable run is not an acceptance condition.
 
 - [ ] Report account value, cash, gross/net exposure, P&L, verified cash-flow-adjusted
   returns and drawdown; distinguish broker account totals from strategy attribution.
-- [ ] Attribute owned fills, fees, positions and P&L by strategy/run. Existing and
+- [x] Attribute owned fills, fees, positions and P&L by strategy/run. Existing and
   manual positions stay in an external/unattributed bucket; do not assign the
   account's entire P&L to one strategy. Broker account totals remain authoritative.
-- [ ] Add selected long-option orders after P2/P3 pass: exact contract/multiplier,
-  fresh bid/ask, tick-valid limits, partial fills and expiry-aware restrictions.
-  Unsupported lifecycle/assignment behavior must be detected and surfaced.
+- [x] Selected long-option limit orders: exact contract/multiplier, fresh bid/ask,
+  tick-valid limits and expiry-day refusal; bounded buy/sell and cancellation validated.
+- [ ] Validate natural option partial fills and implement additional lifecycle handling
+  only within explicit scope; automated option strategies remain separate.
 - [ ] Compare paper executions and costs with the same strategy's backtest under
   recorded assumptions; evaluate behavior across multiple sessions.
 
@@ -1437,18 +1448,18 @@ moving-average distance
 
 ### TODO
 
-- [ ] `OptionContract`
-- [ ] `OptionChain`
-- [ ] contract discovery
-- [ ] expiration filtering
-- [ ] strike filtering
+- [x] Explicit `Option` selector and resolved `OptionQuote` contract identity
+- [x] `OptionChain`
+- [x] contract discovery
+- [x] Exact expiry/strike candidate selection within discovered chain groups
+- [ ] Convenience range filters for expirations and strikes
 - [ ] moneyness calculations
 - [x] Initial US equity/ETF option snapshots and selected-contract quote streams
 - [ ] Full option-chain quote snapshots beyond selected-contract acquisition
-- [ ] implied volatility representation
-- [ ] Greeks representation
+- [x] implied volatility representation
+- [x] Greeks representation
 
-Target API:
+Future convenience API (current API: `Market.option_chain()` and `OptionChain.select()`):
 
 ```python
 chain = market.options.chain("AAPL")
@@ -1582,33 +1593,34 @@ IBKR API objects
 The existing provider boundary, immutable `Bar` values, `BarSeries.snapshot()`,
 UTC/date normalization and optional chart imports are useful foundations. Keep
 those pieces. The prototype now includes research datasets, equity/option backtests, independent
-quotes, account monitoring and experimental paper broker/runner APIs. Actual paper
-order integration and broader recovery/accounting remain unverified.
+quotes, account monitoring and experimental paper broker/runner APIs. Bounded
+AAPL execution, explicit same-day recovery and selected-option lifecycle checks
+are validated; broader recovery/accounting remains unfinished.
 Preserve the implemented boundaries and address the remaining ones incrementally:
 
 - Implemented: research requests skip session enrichment by default;
   `include_sessions=True` opts in. Charts enable it explicitly. Records/CSV exports
   and optional pandas DataFrames provide independent snapshots. Explicit dataset
   bounds/basic metadata, frozen reload, caller-supplied calendar audits and finality
-  assertions are implemented. Automatic finality certification and completed-bar
-  strategy events remain future work.
+  assertions are implemented. The equity runner consumes completed bars independently
+  of the browser. Automatic data-finality certification remains future work.
 - Fixed-range downloads now release the Market control lock and fail with partial
   data if their provider generation disconnects. Subscription cancellation stays
-  responsive. Legacy lookback loads/recovery still serialize operations; future
-  broker controls must keep their own responsive path.
-- Chart selection currently cancels the prior chart subscription. Give chart and
-  strategy consumers independent ownership so navigation cannot stop a strategy's
-  feed. Keep multi-symbol research independent of the single-chart HTTP session.
-- Live candles are replaceable snapshots. Define bar-update versus completed-bar
-  events, event time/order, historical replay and partial-bar policies before
-  sharing signals between backtest and live use. Browser polling/countdowns are
+  responsive. Legacy data lookback loads/recovery still serialize operations; broker
+  order/cancel controls use a separate connection.
+- Chart selection cancels the prior chart subscription. The equity runner owns a
+  separate Market connection, so chart navigation cannot stop its feed. Keep
+  multi-symbol research independent of the single-chart HTTP session.
+- Live candles are replaceable snapshots. The equity runner implements completed-bar
+  decisions, warmup exclusion and a persisted decision cursor; preserve those
+  semantics when extending user-defined or option strategies. Browser polling/countdowns are
   presentation only and must not drive strategy execution.
 - Frozen `BarDataset` files provide independent offline research inputs with
   integrity checks and fingerprints. Keep these inputs
   separate from the exact-query cache, which remains an acquisition optimization
   rather than a merged historical research database.
-- Add a separate broker execution component for order IDs, acknowledgements,
-  partial fills, positions, reconciliation and user controls. The current
+- The separate broker execution component owns order IDs, acknowledgements,
+  partial-fill callbacks, positions, reconciliation and user controls. The current
   data-only reconnect/resubscribe path must not be reused to resubmit orders.
 
 Develop these changes through the next research/backtest/paper-trading slices;

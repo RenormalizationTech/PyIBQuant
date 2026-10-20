@@ -11,8 +11,8 @@ results. Existing fixed-size equity/option APIs retain their behavior. Named
 scientific datasets, quality reports and small daily/intraday study starters are
 also implemented. The local 0.1.0.dev1 snapshot packages these foundations with
 an API guide, source-distribution examples and reusable validation scripts.
-Release preparation is complete at checkpoint `f0f79a6`. Next: algorithmic paper
-trading with persistent account performance and order tracking. Worked scientific
+Release preparation is complete at checkpoint `f0f79a6`. Current work: complete settlement accounting and broader recovery around the
+validated bounded paper-trading foundation. Worked scientific
 studies follow the paper-trading milestone. Strategy comparisons and performance
 reports remain part of the backtesting backlog.
 
@@ -23,7 +23,7 @@ the TWS end-to-end workflow and three offline Chrome regressions passed.
 Live recording, bulk collection and external providers are not required. The
 obsolete recording/rotation/replay stack and recorded-quote simulator were removed.
 
-## Next milestone — algorithmic paper trading and account performance
+## Current milestone — algorithmic paper trading and account performance
 
 Priority updated 2026-10-19. Detailed design and acceptance checks are in
 [PROJECT_PLAN.md, section 24](PROJECT_PLAN.md#24-phase-6--algorithmic-paper-trading-and-account-performance).
@@ -48,7 +48,8 @@ top of HANDOFF.md. Unattended recovery across failures/sessions remains future w
 - [x] P1: durable account history and focused cash/value/P&L charts with freshness/gaps
 - [x] P2: initial limit submit/cancel, fill/fee callbacks and durable identities (offline tested)
 - [ ] P2: settlement-aware spending checks, fees and reconciled order reservations
-- [ ] P2: startup/reconnect reconciliation without duplicate submissions
+- [x] P2: explicit startup/same-day recovery with reconciliation and no blind resends
+- [ ] P2: automatic broker reconnect and recovery across trading sessions
 - [x] P2: recorded order/fill history and bounded paper round-trip/cancellation checks
 - [x] P3: dedicated market feed and completed-bar above-SMA runner (observation verified)
 - [x] P3: initial lifecycle controls, limits and pause-on-disconnect (offline tested)
@@ -63,7 +64,8 @@ top of HANDOFF.md. Unattended recovery across failures/sessions remains future w
 - [x] Owner-run process restart/resume preserves ownership, loss baseline and order budget
 - [x] Separate one-share cancellation harness with exact-ID recovery and fill/timeout handling
 - [x] Owner-run acknowledged unfilled cancellation and released reservation (2026-10-20)
-- [ ] Completed-order recovery, execution corrections and multi-session baseline policy
+- [x] Exact-identity completed-order recovery for existing journal orders
+- [ ] Full historical recovery coverage, execution corrections and multi-session baseline policy
 - [x] P3: validate bounded equity strategy orders and explicit same-day process recovery
   - Owner-run AAPL algorithmic buy/sell round trip reconciles to -2.147077 USD net.
     October 20 bounded run completed with three fills and one AAPL share retained.
@@ -296,7 +298,7 @@ signal, and exports reproducible inputs/results. Optional charts inspect the wor
 - [x] Frozen input fingerprint, required finality assertion and optional calendar check
 - [x] Validate two strategies (above-SMA and SMA crossover) before generalizing a framework
 - [ ] Optional entry/exit and performance visualizations
-- [ ] Explicit paper-trading workflow through IBKR (after execution prerequisites)
+- [x] Bounded AAPL paper strategy execution, cancellation and explicit same-day recovery
 
 Equity backtesting remains implemented and verified. The recorded-quote options
 experiment was removed during scope cleanup; historical option acquisition is implemented;
@@ -315,7 +317,8 @@ a first historical-bar option simulation is also implemented. Keep paper executi
 - [x] Frozen AAPL 2026-11-20 340 C bid/ask and model IV/Greeks verified via TWS
 - [x] Handle SDK-normalized None Greeks and UNSET_DECIMAL sizes
 - [x] In-session live option bid/ask, sizes and model IV/Greeks verified (2026-10-16)
-- [ ] Optional SPY retry after resolving its 10091 SPY ARCA/TOP/ALL permission message
+- SPY entitlement retry is deferred by owner choice; latest check returned 10089
+  ARCA/TOP/ALL. Continue with AAPL; no subscription change is assumed.
 - [x] Grouped option-chain discovery with explicit, unverified candidate selection
 - [x] Independently owned continuous stock/option quote subscriptions and consumer cursors
 - [x] Opt-in quote reconnect with exact contract identity, empty replacement generations and gap history
@@ -326,12 +329,13 @@ a first historical-bar option simulation is also implemented. Keep paper executi
 ## Execution architecture prerequisites
 
 - [x] Quote subscriptions have independent ownership and per-consumer update cursors
-- [ ] Independent bar subscription ownership for chart and strategy consumers
-- [ ] Completed-bar strategy events independent of browser polling and countdowns
+- [x] Dedicated strategy Market connection independent of the chart feed
+- [x] Completed-bar strategy decisions independent of browser polling and countdowns
 - [x] Fixed-range downloads release the Market control lock; subscription cancellation stays responsive
-- [ ] Extend this separation to future broker order/cancel controls and legacy lookback/history operations
-- [ ] Separate broker order/fill/position state and reconciliation from data recovery
-- [ ] Explicit user start/stop/cancel controls and paper-account integration checks
+- [x] Dedicated broker connection for order/cancel controls
+- [ ] Reduce serialization in legacy data lookback/history operations where needed
+- [x] Separate broker order/fill/position state and reconciliation from data recovery
+- [x] Explicit start/pause/resume/stop/cancel/owned-flatten controls and bounded paper checks
 
 ## Completed prototype
 
