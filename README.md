@@ -9,7 +9,8 @@ installed `ibapi`, a running and logged-in TWS or IB Gateway, and the account an
 market-data permissions needed for the requested instruments. Implemented features
 include market data, frozen datasets, research calculations, daily equity
 backtests, a strategy-driven portfolio simulator, stock/option quotes and interactive charts.
-Broker-connected algorithmic execution remains planned.
+Read-only paper-account monitoring and an experimental paper broker/strategy runner
+are implemented; actual order integration validation is pending.
 
 ## Project documents
 
@@ -17,7 +18,7 @@ Broker-connected algorithmic execution remains planned.
 - [Development changes](CHANGELOG.md): local development snapshot contents
 
 - [Development handoff](HANDOFF.md): setup on another machine, current architecture and limitations
-- [Project TODO](TODO.md): research priorities, completed foundations and supporting chart backlog
+- [Project TODO](TODO.md): research priorities, completed foundations and release work
 - [Project plan](PROJECT_PLAN.md): research-to-trading vision and overall phases
 
 ## Development direction
@@ -44,7 +45,9 @@ The bar-driven simulator also supports user strategy callbacks, multiple explici
 instruments sharing cash, variable sizing/partial exits, cancellable market orders
 and replaceable execution models. Named multi-instrument datasets, quality reports
 and two lightweight scientific study starters are also implemented.
-Paper execution comes later. Historical bars do not supply quote receipt times,
+Paper account monitoring and persistent performance/order history are implemented.
+Paper execution and its runner remain experimental pending strategy/recovery integration testing; see [the staged plan](PROJECT_PLAN.md#24-phase-6--algorithmic-paper-trading-and-account-performance).
+Historical bars do not supply quote receipt times,
 quote sizes or historical Greeks.
 
 The scope follows IBKR's available history. IBKR lists expired-option history and
@@ -58,10 +61,71 @@ Missing history and permission failures must remain explicit. Historical request
 use a logged-in TWS/Gateway and appropriate permissions; live recording and an
 open trading session are not requirements for historical acquisition.
 
-Charts are optional data/results viewers. Order placement, account state and
-broker-connected strategy execution remain planned. Options research/backtesting
+Charts are optional data/results viewers. General charting features such as saved
+workspaces, watchlist UI, drawing tools and indicator panes are outside project
+scope. Visualization work serves concrete research/backtest results and account
+performance/order tracking.
+Read-only paper-account state and performance tracking work through the API.
+The owner has validated paper sells and a one-share AAPL buy; strategy execution and recovery remain experimental. Options research/backtesting
 is a major product direction and the owner's primary interest; prioritize a usable
-historical research workflow before more collection infrastructure or paper trading.
+historical research workflow, now followed by paper execution and account performance.
+
+## Paper account performance and algorithmic trading
+
+Use the API to observe the paper account and open a focused localhost account view:
+
+```sh
+.venv/bin/python examples/paper_account.py
+```
+
+This records account value, cash, buying power, positions, orders, executions and
+available broker P&L in a local SQLite journal. It starts read-only. Reports and
+CSV history remain under ignored `charts/paper/`. No past account history is invented.
+
+Run the one-minute above-SMA example without submitting orders:
+
+```sh
+.venv/bin/python examples/paper_strategy.py AAPL --seconds 180
+```
+
+See [the paper API and funding policy](docs/API.md#paper-account-observation-and-experimental-execution)
+for the cash-account/margin-account distinction, settled funds, order limits and
+experimental execution status. Live accounts remain disabled. Recovery reports,
+terminal order waits, tagged cancellation, fill-based strategy audits, checkpointed
+resume and owned-only flattening are documented there.
+
+After hours, rebuild account and per-run performance reports directly from the
+saved journal, without TWS:
+
+```sh
+.venv/bin/python examples/paper_report.py --output charts/paper/strategy-review.html
+```
+
+New strategy runs save recovery checkpoints. Restore returns paused and preserves
+identity, risk limits and order counts; explicit resume requires fresh reconciliation.
+Earlier runs without complete checkpoints remain available for reporting.
+
+The saved AAPL paper profile and read-only setup check are ready:
+
+```sh
+.venv/bin/python examples/paper_preflight.py --profile examples/paper_aapl.json --connect
+```
+
+During the regular session, the human operator can launch the bounded test with
+`python examples/paper_strategy.py --profile examples/paper_aapl.json --execute`.
+The profile alone never enables orders. See [setup and operating sequence](docs/API.md#paper-setup-and-operating-sequence)
+for observation, explicit recovery, reports and the remaining broader recovery work.
+
+The separate resting-order cancellation check also defaults to read-only:
+
+```sh
+.venv/bin/python examples/paper_cancel_check.py --profile examples/paper_aapl.json
+```
+
+The human-run `--execute` check submits one AAPL limit buy below bid, then cancels
+only that order and confirms the result. Any fill is reported and retained.
+See [cancellation check and recovery](docs/API.md#paper-cancellation-check-and-recovery)
+before execution or recovery; uncertain outcomes must not be blindly resubmitted.
 
 ## First slice: IBKR → Python → HTML chart
 
@@ -930,9 +994,8 @@ python tests/live_quotes_check.py --symbol AAPL
 ```
 
 Pass `--expiry YYYY-MM-DD --strike NUMBER --right C` (or P) to inspect an explicit
-option. Discovery and independent quote streaming are described below. Chart
-bid/ask display and historical quote imports remain future work. Snapshot calls
-serialize on a connection because IBKR's requested feed type is connection-wide;
+option. Discovery and independent quote streaming are described below. Historical
+quote imports remain future work. Snapshot calls serialize on a connection because IBKR's requested feed type is connection-wide;
 they do not hold the Market control lock while waiting. Disconnects fail the
 snapshot instead of silently repeating it. Historical bar recovery is unchanged.
 

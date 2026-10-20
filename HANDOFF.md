@@ -1,6 +1,6 @@
 # Development handoff
 
-Documentation reviewed: 2026-10-19. Implementation/release baseline: 2026-10-16,
+Documentation reviewed: 2026-10-20. Implementation/release baseline: 2026-10-16,
 Git checkpoint `f0f79a6`. The primary workflow is on-demand IBKR historical data →
 Python research → backtesting. Selected-option historical acquisition is implemented;
 a first single-contract historical-bar option backtest is also implemented.
@@ -8,28 +8,103 @@ The basic strategy-driven bar simulator is now implemented (see checkpoint below
 Named scientific datasets, quality reports and lightweight study starters are delivered.
 The current local development snapshot is 0.1.0.dev1; see docs/API.md and CHANGELOG.md.
 Do not require live recording, a large local archive or external historical-data
-providers. Research/backtesting comes before broker-connected paper execution.
+providers. The research/backtest foundation now includes the validated bounded equity
+paper-trading and account-performance workflow described below.
+
+Scope update — 2026-10-19: the standalone charting backlog has been removed,
+including saved workspaces, watchlist UI, drawings, general indicator panes,
+chart alerts and chart-specific expansion/performance projects. Maintain the
+existing optional viewer; scope new plots around concrete research/backtest results
+and account/order performance tracking.
 
 ## Where to resume
 
-API/documentation review, the end-to-end checks and the local `0.1.0.dev1` build
-are complete. The validation results below are historical checkpoint evidence;
-this documentation reconciliation does not represent a new test or TWS run.
+Current checkpoint: **2026-10-20, stopped for the day**. The bounded AAPL paper
+workflow is validated. The last owner-run reconciliation was flat, with no pending
+owned order or reservation. Cleanup did not contact IBKR; this is recorded state,
+not a new account observation. All source changes are saved locally and remain
+uncommitted; no release or push is implied.
 
-Next: create two documented worked studies using the existing
-`examples/research_collection.py` and `examples/research_studies.py` workflows:
-daily correlations and intraday scaling preparation. Record each question,
-instrument/date/sampling choices, quality limitations, commands, input fingerprints
-and interpretation. Manually review the workflows and let concrete findings drive
-any further preparation changes. No additional scientific dependencies or advanced
-estimators are required for this milestone.
+### Validated workflow and evidence
 
-See [the next-milestone checklist](TODO.md#next-milestone--two-reproducible-worked-studies).
-Python 3.11–3.13 validation remains pending before public release; only Python 3.14
-has been checked locally. Existing release artifacts belong to the implementation
-checkpoint; rebuild with `tests/build_check.py` when incorporating later doc changes.
+- Saved profile: `examples/paper_aapl.json`; AAPL, one-minute above-SMA(20), one
+  share, $500 per-order cap, four orders, $25 account session-loss cap, ten minutes.
+  Profiles cannot enable transmission; `--execute` is explicit. The profile cancels
+  pending run orders on stop and leaves filled holdings for an explicit exit.
+- Run `f88dfa3eef444074aa6c5b4b6cba7396`: ten-minute completion with fills, followed
+  by an owner-run process restart/resume. Ownership, baseline 0.0 and the original
+  order budget survived. Four fills: BUY 340.61, SELL 340.12, BUY 340.36, SELL 340.01.
+  Gross realized -0.84 USD, fees 4.014022, net **-4.854022 USD**. Ledger is complete,
+  flat and issue-free. The next entry was blocked by the four-order cap.
+  This run is exhausted; do not increase its budget or resume it on another date.
+  Evidence: `charts/paper/runs/f88dfa3eef444074aa6c5b4b6cba7396/`.
+- Cancellation check `c97af579ef034829b3afd3d383c928a9`: broker client 297 order 1,
+  one AAPL BUY limit 333.82, acknowledged and canceled with zero fills. Fresh
+  reconciliation was clear, holdings flat, ledger complete with no executions,
+  and pending_owned_order=false. Evidence:
+  `charts/paper/cancel-checks/c97af579ef034829b3afd3d383c928a9/`.
+- Verification: **740 tests**, Ruff, mypy (39 source files), whitespace check,
+  source archive/wheel and isolated SDK-free smoke checks pass. Python 3.14 with
+  official SDK 10.50.2 is installed locally. Python 3.11–3.13 and separate older-SDK
+  environments remain unverified before public release.
 
-## Cleanup checkpoint
+### Important implementation decisions
+
+- `PaperBroker` is read-only by default and accepts selected DU paper accounts
+  only. Keep `strategy.sqlite3`: it holds order identities, fill ownership, risk
+  evidence and recovery checkpoints. Missing or uncertain orders block resubmission.
+- Funding requires conservative broker-reported settled USD cash, cash balance,
+  available funds and buying power, plus a fee reserve. `SettledCashByDate` uses
+  only today's New York balance. `AccountType=INDIVIDUAL` is account structure,
+  not evidence of cash versus margin funding. Never infer settlement from buying
+  power alone or release tomorrow's sale proceeds locally.
+- TWS account P&L requires "Prepare portfolio PnL data when downloading positions".
+  Startup waits for validation, including a two-second settling window. A first
+  zero reset after trusted nonzero P&L needs another valid callback. Quiet flat
+  accounts can use same-day validated journal evidence only after fresh matching
+  account/funds/execution/fee downloads. Old receipt times and loss baselines stay
+  unchanged. A new date, exposure, changed/unknown evidence or conflicting sample
+  blocks reuse. Never fabricate an initial zero baseline.
+- Feed receipt is captured before the actual comparison clock to avoid callbacks
+  arriving during account/risk work appearing spuriously future-dated. The strict
+  15-second limit remains; failed checks journal exact timestamps and ages.
+- Account-summary subscriptions are persistent across refreshes. Only readiness
+  and currency metadata carry over; balances/positions require fresh downloads.
+- `EquityRunner.restore` returns paused. Explicit same-day resume reconciles fills,
+  holdings, order budget and risk. A POSIX process lease prevents concurrent local
+  execution of one run. Stop, cancel and strategy-owned flatten are separate.
+- Broker execution in this chat used human terminal handoff after automatic review
+  rejected agent-initiated broker orders/cancellations, including paper transactions.
+  Do not bypass that rejection through another tool.
+
+### Next session
+
+No more setup commands are needed today. On a later trading date, inspect the
+account and use a **new** bounded run; the validated old run is exhausted and
+cross-date resume is intentionally refused. Follow `docs/API.md` for preflight,
+observation, execution, recovery, cancellation and offline reports.
+
+Remaining work: longer/multi-session observation, cross-date baseline policy,
+settlement edge cases, full completed-order history and corrections, automatic
+broker reconnect, then selected options. Live-money enablement is outside this
+checkpoint. The full roadmap is in `TODO.md` and `PROJECT_PLAN.md` section 24.
+General chart-workspace expansion remains removed from scope.
+
+### Local data and cleanup
+
+`charts/paper/README.md` indexes private data. Primary journals, completed/failed
+run evidence, cancellation artifacts and the historical rebalance evidence are
+retained. Read-only diagnostic journals and old visual/report checks are archived
+under `charts/paper/archive/2026-10-20/`; the archive manifest records original
+paths, sizes and hashes. Archives are evidence, not journals to launch a new run
+against. `tests/live_paper_check.py` is now read-only; use the separate documented
+strategy and cancellation examples for human-run execution.
+
+Generated private data remains Git-ignored. No credentials or account identifiers
+belong in source control. The `.venv`, research datasets and historical caches are
+preserved. Current package artifacts can be rebuilt with `tests/build_check.py`.
+
+## Historical cleanup checkpoint — 2026-10-16
 
 Removed the superseded recording-based options experiment:
 
@@ -58,7 +133,8 @@ Changes are saved as local checkpoints; no remote push or release is implied.
 
 ## What remains implemented
 
-- Official manually installed IBKR SDK adapter; no order-placement/account-state API.
+- Official manually installed IBKR SDK market-data adapter and a separate guarded
+  DU-paper-only account/order API; real-money account execution remains disabled.
 - US equity/ETF historical bars, fixed start/end ranges, paging/pacing and optional
   exact-query Parquet cache. History is TRADES with split-only adjustment semantics.
 - Selected unexpired option intraday history with fixed bounds, exact resolved

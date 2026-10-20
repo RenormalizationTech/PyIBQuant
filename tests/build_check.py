@@ -47,7 +47,9 @@ def main() -> None:
         with tarfile.open(archive) as package:
             names = package.getnames()
             for required in ('examples/research_studies.py', 'docs/API.md', 'CHANGELOG.md',
-                             'tests/wheel_smoke.py', 'tests/live_workflow_check.py'):
+                             'tests/wheel_smoke.py', 'tests/live_workflow_check.py',
+                             'examples/paper_aapl.json', 'examples/paper_preflight.py',
+                             'examples/paper_cancel_check.py'):
                 assert any(name.endswith('/' + required) for name in names), required
             assert not any('/charts/' in name or '/.venv/' in name or '/.git/' in name
                            for name in names)
@@ -64,7 +66,8 @@ def main() -> None:
             names = package.namelist()
             for required in ('pyibquant/simulation.py', 'pyibquant/studies.py',
                              'pyibquant/collection.py', 'pyibquant/py.typed',
-                             'pyibquant/visualization/chart.js'):
+                             'pyibquant/visualization/chart.js',
+                             'pyibquant/trading/cancel_check.py'):
                 assert required in names, required
             metadata = package.read(next(name for name in names if name.endswith('/METADATA')))
             requirements = [line for line in metadata.decode().splitlines()

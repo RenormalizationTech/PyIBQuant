@@ -23,8 +23,9 @@ This remains a development prototype.
 
 Product direction: prioritize convenient Python access to IBKR for quantitative
 research, backtesting and algorithmic trading. Interactive visualization supports
-those workflows. A standalone charting product or TradingView replacement is not
-the current objective. Users supply the IBKR Python API, logged-in TWS/Gateway and
+those workflows. A standalone charting product or TradingView replacement is
+outside project scope. The general chart workspace and charting-feature backlog
+has been removed. Users supply the IBKR Python API, logged-in TWS/Gateway and
 required account/data permissions; automating that setup is not a milestone.
 
 Fixed-range data queries, basic dataset metadata and a returns/SMA research
@@ -47,15 +48,12 @@ market-order lifecycle, replaceable execution and a shared USD portfolio ledger.
 Named scientific datasets, quality reports and small dependency-free study
 starters are implemented. API/documentation review, end-to-end regression and the
 local `0.1.0.dev1` development snapshot are complete (checkpoint `f0f79a6`).
-Next milestone: two reproducible worked studies using the existing daily
-correlation and intraday scaling helpers. Each should document its question,
-instruments, date range, sampling choices, data-quality evidence, commands and
-interpretation limits. The helpers and runnable scripts already exist; the next
-work is to turn them into documented scientific examples and identify practical
-workflow improvements. Advanced analysis remains user-owned. See the
-[next-milestone checklist](TODO.md#next-milestone--two-reproducible-worked-studies).
-Broker-connected paper execution
-remains planned.
+Next milestone (priority updated 2026-10-19): algorithmic paper trading with
+persistent account performance and order tracking. Start with account observation,
+then broker order lifecycle/reconciliation and a controlled strategy runner.
+See [the staged paper-trading plan](#24-phase-6--algorithmic-paper-trading-and-account-performance).
+The two worked scientific studies remain a subsequent milestone; their helpers
+already exist. Advanced analysis remains user-owned.
  [TODO.md](TODO.md) orders the work.
 [HANDOFF.md](HANDOFF.md) records setup, limitations, validation and where to resume.
 Later phases below remain plans, not implemented APIs.
@@ -104,8 +102,10 @@ analyze data directly from Python. Plotting is an optional inspection step.
 Near-term priority: reliable scientific datasets, multi-instrument acquisition and
 loading, transparent alignment and Python exports. Existing research helpers and
 backtest engines remain useful. Strategy reports are a separate backtesting
-improvement; paper-trading integration comes later. Expand chart/workspace
-features when a concrete research or trading use case needs them.
+improvement. Paper-account execution and performance tracking are now the next
+implementation priority. Maintain the existing chart
+viewer and add visualization for concrete research/backtest results and
+account/order performance tracking.
 
 ---
 
@@ -128,8 +128,8 @@ returns/SMA research. After-hours TWS validation passed for one completed AAPL
 option session. The first bar-based option backtest is implemented for long/flat
 TRADES/MIDPOINT inputs with explicit synthetic next-open execution. The basic
 strategy-driven engine now supports underlying signals driving option trades,
-shared cash and partial exits. Prioritize scientific data acquisition/loading next;
-keep built-in analysis small and leave advanced methods to users.
+shared cash and partial exits. Prioritize the paper-account execution and performance milestone next; keep
+built-in scientific analysis small and leave advanced methods to users.
 The removed recorded-quote simulator is not the historical backtest model; do not
 invent sizes/Greeks/receipt timestamps for historical bars. Current chain discovery is not a historical
 point-in-time chain. Expired options and option EOD history are outside IBKR's
@@ -137,7 +137,7 @@ available historical scope; unavailable inputs should fail clearly.
 
 Selected experiments may cache or save their exact inputs for repeatability.
 This is a convenient IBKR research client, not a market-data warehousing product.
-Prioritize the research/backtest workflow before broker-connected paper execution.
+Build paper execution on the delivered research/backtest foundations.
 
 ---
 
@@ -535,12 +535,10 @@ PyIBQuant/
 │       │
 │       ├── visualization/
 │       │   ├── charts/
-│       │   ├── dashboard/
 │       │   └── options/
 │       │
 │       ├── monitor/
-│       │   ├── scanner.py
-│       │   └── watchlist.py
+│       │   └── scanner.py
 │       │
 │       └── trading/
 │           └── ibkr/
@@ -796,33 +794,16 @@ Potential research topics:
 
 # 12. Visualization
 
-PyIBQuant should provide browser-based interactive visualization.
+Visualization is an optional tool for inspecting source data, research signals,
+backtest entries/exits and equity curves. Maintain the existing native Canvas
+viewer and its delivered interactions. Result plots may be added for concrete
+research, backtesting or account/order performance needs.
 
-Visualization is a supporting tool for inspecting source data, research signals,
-backtest entries/exits, equity curves and trading context. Keep the existing native
-Canvas renderer useful, but prioritize the Python research/backtesting workflow
-over chart parity, saved workspaces or a standalone charting application.
-Follow the priorities in [TODO.md](TODO.md).
-
-## Market Chart
-
-Initial features:
-
-- candlesticks;
-- volume;
-- zoom;
-- pan;
-- configurable interval;
-- indicator overlays;
-- signal markers.
-
-Later:
-
-- multiple panels;
-- synchronized charts;
-- trade markers;
-- research annotations;
-- live updates.
+A standalone charting platform is outside project scope. Saved chart workspaces,
+watchlist UI, drawing tools, general indicator panes, synchronized multi-chart
+layouts, chart alerts and appearance/export feature expansion are not roadmap
+items. Account performance and order views are in scope. See [TODO.md](TODO.md)
+for current priorities.
 
 ---
 
@@ -850,7 +831,8 @@ Potential signals include:
 - unusual movement;
 - sector-relative strength.
 
-The monitor identifies candidates.
+The monitor identifies candidates through Python data and ranking outputs.
+A watchlist or chart dashboard UI is outside scope.
 
 It should not initially execute trades automatically.
 
@@ -1079,8 +1061,10 @@ Interactive Browser Chart
 - [x] zoom
 - [x] pan
 - [x] interval display
-- [ ] indicator overlays
-- [ ] signal markers
+
+The delivered viewer is maintained for inspection. General charting expansion
+has been removed from the roadmap; research/backtest result plots and account
+performance/order views are scoped with those workflows.
 
 Implemented CLI:
 
@@ -1173,23 +1157,253 @@ Do not attempt to simulate an entire exchange.
 
 ---
 
-# 24. Phase 6 — Paper Trading
+# 24. Phase 6 — Algorithmic Paper Trading and Account Performance
 
-Only strategies that have already been tested should reach this stage.
+Priority updated 2026-10-19: this is the next implementation milestone, ahead of
+worked scientific studies. The owner authorizes development and integration tests
+against the current paper account. Real-money trading remains outside this scope.
+Implementation checkpoint 2026-10-19: initial account monitoring/reporting, guarded
+paper order code and a completed-bar runner are implemented. Account acquisition and
+live-data observation are verified; the owner reports successful paper liquidation
+and a one-share AAPL entry. Shared order waits, tagged cancellation, reconciliation
+reports, persistent fill ownership/export and owned flatten have offline regression
+coverage. Versioned process restore now preserves identity, limits and the session
+baseline, returns paused and reconciles before explicit resume. Account reports
+include fill-derived per-run P&L, costs, exposure and observed dollar drawdown with
+offline journal replay and CSV exports. Completed-order recovery, corrections,
+broker restart integration and strategy execution across sessions remain acceptance work.
+Unchecked items below describe the full acceptance scope, including those gaps.
 
-### TODO
+Bounded-equity acceptance checkpoint 2026-10-20: the owner completed a ten-minute
+AAPL run with fills, then restarted/resumed its process while preserving fill
+ownership, loss baseline and the four-order cap. The fourth fill closed the held
+share; a fifth submission was blocked. A separate resting-order check then passed
+broker acknowledgment, unfilled cancellation, flat reconciliation and released
+pending reservation. The initial saved-profile/preflight/execution/reporting setup
+is validated. Broader multi-session, broker-restart, correction and settlement
+edge-case requirements below remain separate from this bounded acceptance.
 
-- [ ] broker abstraction
-- [ ] IBKR broker implementation
-- [ ] order state management
-- [ ] reconciliation
-- [ ] disconnect recovery
-- [ ] structured logging
-- [ ] risk/safety controls
-- [ ] paper-account testing
+## Outcome and boundaries
 
-Live automated trading is explicitly out of scope until paper trading is
-robust.
+Run a tested Python strategy in an IBKR paper account, track every order and fill,
+and inspect persistent cash, net liquidation value and P&L histories. Account and
+order performance charts are part of trading observability. The standalone
+charting-platform backlog remains removed.
+
+Start with one selected paper account, USD reporting, one US equity/ETF and whole
+shares, long/flat. Validate the shared broker lifecycle before adding single-leg
+options with resolved identity/multiplier, limit prices and expiry restrictions.
+Existing positions in any instrument must remain visible even when the first
+runner cannot trade them. Multi-leg options, shorting, margin strategies and live
+accounts require later scope. Do not liquidate pre-existing positions implicitly.
+
+## Architecture
+
+Keep `Market` and its data-only adapter separate from a broker connection with a
+dedicated client ID. Proposed modules are `broker.py` (public immutable state and
+commands), `trading/ibkr.py` (SDK adapter), `trading/journal.py` (durable events),
+`trading/runner.py` (strategy orchestration) and `trading/performance.py` (reports).
+These modules now contain the initial implementation; see docs/API.md for supported
+entry points and experimental execution limitations.
+
+The broker owns account subscriptions, order IDs, order/fill state and recovery.
+The runner consumes independently owned market data and emits order intents through
+the broker. A serialized event loop processes strategy decisions; network callback
+threads enqueue events without running user strategy code. The journal supplies
+account reports and a localhost performance viewer. Browser refresh or navigation
+must never drive strategy decisions, stop feeds or own broker state.
+
+Reuse pure signal calculations and instrument identity. Do not reuse simulated
+fills, cash or order statuses as broker truth, and do not promise the simulator's
+`Context` is already suitable for asynchronous execution.
+
+## Shared paper/live execution and funding policy
+
+Requirement clarified 2026-10-19: paper trading is a rehearsal for real trading.
+Use the same strategy runner, order lifecycle, reconciliation, funding checks and
+performance definitions in both environments. Environment/account selection is
+explicit configuration; the first implementation permits paper only. Future live
+activation requires separate authorization and validation, not a second strategy
+implementation. Paper fills/clearing behavior are not evidence of live fill quality
+or exact funding enforcement.
+
+The intended live account type must be recorded separately from the paper account's
+reported type. A margin paper account must not silently supply margin capacity to
+a strategy intended for a cash account. Start with an explicit settled-cash-only,
+no-borrowing policy; support a margin policy separately if requested.
+
+- [ ] P1: capture account type, total cash, settled cash, available funds and buying
+  power distinctly, including currency, timestamps, source and missing-field status.
+  Account value and total cash alone are not an executable spending budget.
+- [ ] P2: evaluate spendable funds before every new order or quantity/price increase.
+  Include estimated fees, price cushions and outstanding commitments; serialize
+  checks/reservations so concurrent signals cannot spend the same funds twice.
+- [ ] Track unreflected local commitments separately from broker-reflected debits
+  and holds, with reconciliation to avoid double subtraction. Partial fills reduce
+  remaining reservations; pending cancellations retain the remaining hold until
+  confirmed. Unknown send outcomes retain their commitments until resolved.
+- [ ] For the cash-only policy, exclude unsettled sale proceeds. Maintain dated,
+  currency-specific settlement obligations and reconcile with broker settled funds;
+  never treat a sell fill or realized profit as immediately spendable by default.
+  Any local estimate must not loosen broker restrictions. Unknown/stale funding
+  data blocks new exposure, with a visible reason.
+- [ ] Version settlement rules by product, market and effective date. US stock/ETF
+  regular-way settlement is generally T+1 business day; account for settlement
+  holidays rather than adding 24 hours. Do not hardcode the same rule for options,
+  FX or other markets. Formal clearing settlement and IBKR's displayed settled-cash
+  availability are distinct: the current TWS guide lists T+0 options availability
+  for US/Canadian/Mexican/Indian markets. Verify account/product behavior; a stricter
+  local policy is allowed when explicit, not described as the broker's rule.
+- [ ] If margin is later enabled, enforce broker available funds, margin requirements,
+  excess liquidity and configured exposure/borrowing limits. Unsettled proceeds are
+  not universally blocked in a margin account. Broker acceptance remains decisive;
+  local checks cannot guarantee acceptance or simulate all house restrictions.
+- [ ] Show total, settled, unsettled and locally reserved cash plus usable strategy
+  budget in the account report; label local estimates and incomplete coverage.
+- [ ] Test same-day sell/rebuy blocking under cash-only policy, unused settled-cash
+  purchases, next-business-day release, holidays, fees, two simultaneous orders,
+  partial fills, cancellation races, restart and missing/stale funding snapshots.
+
+Funding references checked 2026-10-19:
+
+- [SEC T+1 investor bulletin](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/new-t1-settlement-cycle-what-investors-need-know-investor-bulletin)
+- [IBKR account balances and settled cash](https://www.ibkrguides.com/traderworkstation/account-balances.htm)
+- [IBKR cash and margin account configurations](https://www.interactivebrokers.com/en/accounts/configuring-your-account.php)
+- [IBKR paper simulator limitations](https://www.interactivebrokers.com/campus/glossary-terms/paper-trading-account/)
+
+### Funding distinction and implementation status
+
+A cash account and a margin account whose strategy avoids borrowing are different
+funding configurations. Margin may allow reuse of unsettled proceeds; avoiding a
+debit balance does not turn it into a cash account. Broker `AccountType` can describe
+legal structure rather than cash/margin financing, so it is not sufficient proof.
+`BuyingPower` is not universal order-specific approval. The first implementation
+uses broker fields and a stricter settled-cash/no-borrowing cap, serializes to one
+unresolved owned order, and refreshes funds before each submission. It does not
+reimplement IBKR settlement calendars. It validates the USD
+`SettledCashByDate` date:balance entries and selects today's balance from single-
+or multi-date schedules, blocking missing, malformed or ambiguous values. A full dated
+local settlement ledger and advanced margin policy remain plans.
+
+## P1 — Account observation and durable performance history
+
+- [ ] Discover managed accounts, select one explicitly and establish its paper
+  identity from the configured paper session/account mapping. A port number or
+  account-name prefix alone is not proof; reject ambiguity and live targets.
+- [ ] Download initial account values, positions and visible orders with explicit
+  completion barriers. Report partial/timeout states rather than an empty portfolio.
+- [ ] Subscribe to account values and account P&L; retain currency, source, receipt
+  timestamps and per-field freshness. Normalize unset values to missing, never zero.
+- [ ] Capture cash (`TotalCashValue`), net liquidation value, available funds,
+  buying power, gross position value, daily/realized/unrealized P&L and positions.
+  Keep currencies distinct and use broker base-currency totals for account charts.
+- [ ] Persist raw normalized events and materialized snapshots transactionally in
+  a local standard-library SQLite journal outside Git. Use schema versions,
+  session IDs, account IDs, sequence numbers and UTC timestamps; mask account IDs
+  in shareable reports. Flush on orderly stop and recover after interrupted writes.
+- [ ] Show cash and account-value curves, separate P&L curves, current positions,
+  visible open orders and connection/freshness status in a focused localhost view;
+  provide offline HTML/CSV reporting from the same persisted history.
+
+Acceptance: compare displayed fields to TWS during a market session, restart the
+observer without losing history, and show a visible gap during disconnect. A flat
+account is a valid result. Account monitoring works before order placement is enabled.
+
+Account history starts when observation starts. TWS callbacks are not a complete
+historical account statement service. Account-value callbacks and P&L have different
+cadences/reset semantics; faster chart refresh does not create fresher broker data.
+Record broker P&L separately from change since the local session baseline. Net
+liquidation change is not trading profit when deposits, withdrawals, paper resets,
+FX or external trades contribute. Record known external cash flows; publish an
+adjusted profit/return only when flows and coverage are verified. Otherwise label
+value changes and incomplete return attribution explicitly. P&L resets must not be
+summed into a fictitious cumulative curve. Start a new baseline after paper resets.
+
+## P2 — Paper order lifecycle and reconciliation
+
+- [ ] Allocate IDs from `nextValidId` and observed order IDs, persist local intent
+  before sending, and track account/client/order ID, broker permanent ID, order
+  reference, strategy ID and run ID. Market-data request counters are not order IDs.
+- [ ] Submit/cancel DAY market and limit orders for the initial equity scope;
+  preserve broker acknowledgement, held/rejected/inactive reasons, partial fills,
+  remaining quantity, execution IDs and late commission/fee reports.
+- [ ] Deduplicate callbacks and executions; tolerate missing/repeated/out-of-order
+  status updates and execution corrections. Submission success is not a fill.
+  A cancellation request is not cancellation confirmation; fills may race it.
+- [ ] Separate account-wide visibility from strategy-owned orders. Report which
+  clients/manual orders are visible and which are controllable; never imply a
+  snapshot of all open orders grants cancellation rights or continuous coverage.
+- [ ] At start/reconnect, reconcile open/completed orders, available executions and
+  positions before enabling submissions. Missing historical coverage stays explicit.
+  Ambiguous send outcomes enter an unresolved state; never blindly resubmit them.
+- [ ] Add order/fill tables and timestamped submission/fill/cancel/rejection events
+  to performance reports, including fees, strategy/run filters and position changes.
+
+Acceptance: a bounded paper buy/sell round trip reconciles with TWS executions and
+positions; a resting limit order is canceled and its final state verified. Repeated
+callbacks and a disconnect after send do not cause duplicate orders or counted fills.
+Record actual effects and final holdings rather than assuming every test fills.
+
+## P3 — Strategy runner and explicit controls
+
+- [ ] Independent bar subscriptions, completed-bar events and caller-visible
+  session/calendar/late-update policy; warmup bars must never trigger stale orders.
+- [ ] Run one already backtested intraday equity strategy with explicit quantity,
+  symbol, session hours, parameters and starting holdings policy.
+- [ ] Process live partial fills and outstanding orders when converting target
+  positions into new orders; prevent duplicate decisions for one completed bar.
+- [ ] Implement start, pause, stop and cancel-owned-orders separately. Stop blocks
+  new decisions; cancellation is explicit; flattening is a separate command.
+- [ ] Enforce configured order quantity/notional, position/exposure, outstanding
+  order and submission-rate limits; evaluate fresh account/data state and reject
+  delayed/frozen/stale decision inputs. Daily-loss limits use a defined P&L baseline.
+- [ ] On disconnect, stale data or reconciliation mismatch, pause new submissions.
+  Reconcile before an explicit resume. Journal configuration, code version,
+  signals, risk decisions, order intents and resulting broker events.
+
+Acceptance: a bounded market-session run produces traceable decisions and broker
+orders, obeys pause/stop/limits, and remains independent of viewer navigation.
+A profitable run is not an acceptance condition.
+
+## P4 — Performance attribution and selected options
+
+- [ ] Report account value, cash, gross/net exposure, P&L, verified cash-flow-adjusted
+  returns and drawdown; distinguish broker account totals from strategy attribution.
+- [ ] Attribute owned fills, fees, positions and P&L by strategy/run. Existing and
+  manual positions stay in an external/unattributed bucket; do not assign the
+  account's entire P&L to one strategy. Broker account totals remain authoritative.
+- [ ] Add selected long-option orders after P2/P3 pass: exact contract/multiplier,
+  fresh bid/ask, tick-valid limits, partial fills and expiry-aware restrictions.
+  Unsupported lifecycle/assignment behavior must be detected and surfaced.
+- [ ] Compare paper executions and costs with the same strategy's backtest under
+  recorded assumptions; evaluate behavior across multiple sessions.
+
+## Implementation sequence and local validation
+
+Implement P1 first, then P2, then P3; account charts and the order log evolve with
+these stages. P4 follows a working equity end-to-end path. Do not delay P1/P2 for
+scientific studies or chart workspace work.
+
+Use deterministic fake-callback tests for lifecycle races, partial downloads,
+missing values, late fees, restart, reconciliation and P&L baselines; keep existing
+research/backtest tests passing. Exercise explicit paper integration checks during
+available market hours, with recorded quantities and before/after state. No test
+should require a particular profit or market move. SDK compatibility must cover
+both the documented minimum and the installed version where signatures differ;
+the inspected local SDK is 10.50.2, including its commission-and-fees callback and
+`OrderCancel` cancellation object.
+
+Existing market-data-only setup keeps TWS Read-Only API enabled. P1 can remain
+read-only. P2 requires disabling that setting in the verified paper session;
+account selection and order controls belong in the execution API itself. Reconnect
+must not use the data-recovery path to replay order requests.
+
+API references checked for planning:
+
+- [IBKR account updates](https://www.interactivebrokers.com/docs/tws-api/doc/account-portfolio-data/account-updates/requesting-account-updates)
+- [IBKR placing orders](https://www.interactivebrokers.com/docs/tws-api/doc/quick-start/placing-orders)
+- [IBKR order identity and modification](https://www.interactivebrokers.com/docs/tws-api/doc/orders/modifying-orders)
+- [IBKR P&L semantics (legacy reference)](https://interactivebrokers.github.io/tws-api/pnl.html)
 
 ---
 
@@ -1201,11 +1415,9 @@ robust.
 
 - [ ] universe abstraction
 - [ ] S&P 500 universe implementation
-- [ ] watchlist manager
 - [ ] efficient concurrent data handling
 - [ ] market scanner
 - [ ] ranking
-- [ ] dashboard
 - [ ] configurable refresh intervals
 
 Initial scanner signals:
@@ -1253,7 +1465,6 @@ selected = chain.filter(
 
 ### TODO
 
-- [ ] interactive option-chain table
 - [ ] IV smile
 - [ ] volatility skew
 - [ ] term structure
@@ -1309,7 +1520,7 @@ Do NOT prioritize:
 - distributed computing;
 - custom database infrastructure;
 - cloud infrastructure;
-- full TradingView replication;
+- standalone charting platforms and TradingView replication;
 - hundreds of technical indicators;
 - every brokerage;
 - cryptocurrency;
@@ -1370,8 +1581,9 @@ IBKR API objects
 
 The existing provider boundary, immutable `Bar` values, `BarSeries.snapshot()`,
 UTC/date normalization and optional chart imports are useful foundations. Keep
-those pieces. The prototype now includes research datasets, daily equity backtests
-and independent quotes. It has no broker trading-control API or options backtest.
+those pieces. The prototype now includes research datasets, equity/option backtests, independent
+quotes, account monitoring and experimental paper broker/runner APIs. Actual paper
+order integration and broader recovery/accounting remain unverified.
 Preserve the implemented boundaries and address the remaining ones incrementally:
 
 - Implemented: research requests skip session enrichment by default;
@@ -1487,9 +1699,9 @@ Broader option lifecycle models and broker controls remain planned.
 
 # 34. Later Target — User-Controlled Paper Trading
 
-First complete the useful IBKR historical-data research/backtest workflow,
-including selected options. Later reuse signal calculations with an IBKR paper
-broker, while keeping historical simulation and broker execution separate. Implement order IDs, order/fill state,
+The IBKR historical-data research/backtest foundation, including selected options,
+is delivered. The next milestone reuses signal calculations with an IBKR paper
+broker (see section 24), while keeping historical simulation and broker execution separate. Implement order IDs, order/fill state,
 position/cash reconciliation, explicit start/stop/cancel controls, and reconnect
 handling before moving toward live execution. Chart navigation must not control
 strategy subscriptions or order lifecycle. This target can reuse the first equity

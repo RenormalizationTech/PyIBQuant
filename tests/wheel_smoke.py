@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 import pyibquant
 from pyibquant import (
@@ -20,6 +21,7 @@ from pyibquant import (
     Option,
     OptionChain,
     OptionChainGroup,
+    PaperBroker,
     QuoteStream,
 )
 from pyibquant.backtest import backtest_equity
@@ -29,6 +31,8 @@ from pyibquant.quotes import QuoteInstrument, _QuoteState
 from pyibquant.research import simple_returns, sma
 from pyibquant.simulation import Feed, NextOpen, TargetStrategy, simulate
 from pyibquant.studies import daily_correlations, intraday_scaling
+from pyibquant.trading.profile import PaperProfile
+from pyibquant.trading.cancel_check import check_tag
 
 assert Path(pyibquant.__file__).is_relative_to(Path(sys.prefix)), pyibquant.__file__
 assert importlib.util.find_spec('ibapi') is None, 'Use an environment without the SDK'
@@ -37,6 +41,9 @@ assert 'ibapi' not in sys.modules
 assert 'pyarrow' not in sys.modules
 assert importlib.util.find_spec('pandas') is None, 'Base exports must work without pandas'
 assert 'pandas' not in sys.modules
+assert PaperProfile().runner_config().dry_run
+assert PaperProfile().broker_options(preflight=True)['readonly']
+assert check_tag('a' * 32) == 'cancel-check-' + 'a' * 32
 assert Option('demo', date(2026, 11, 20), 100, 'c').symbol == 'DEMO'
 resources = files('pyibquant')
 assert resources.joinpath('py.typed').is_file()
@@ -53,6 +60,16 @@ assert bounds.contains(date(2026, 1, 1))
 assert HistoricalRangeError('failed', bars, remaining_start=bounds.start,
                             remaining_end=bounds.end).partial is bars
 with TemporaryDirectory() as directory:
+    adapter = SimpleNamespace(client_id=987, close=lambda: None)
+    with PaperBroker(adapter, Path(directory) / 'account.sqlite3', account='DU123') as broker:
+        assert broker.readonly and not broker.snapshot().complete
+        assert broker.funding()['usable'] is None
+        assert broker.report(Path(directory) / 'account.html').is_file()
+        assert broker.strategy_ledger('smoke').complete
+        assert broker.export_strategy('smoke', Path(directory) / 'strategy.json').is_file()
+        from pyibquant.trading.offline import load_account
+        assert load_account(broker.journal.path)[1].status == 'offline'
+    assert 'ibapi' not in sys.modules
     chain = OptionChain('DEMO', 123, 'USD', (
         OptionChainGroup('SMART', 'DEMO', 100, (date(2026, 11, 20),), (100,)),
     ), datetime.now(UTC))

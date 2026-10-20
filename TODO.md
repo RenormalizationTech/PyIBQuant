@@ -1,6 +1,6 @@
 # PyIBQuant development roadmap
 
-Last reconciled: 2026-10-19. Checkboxes describe implemented behavior, not a release promise.
+Last reconciled: 2026-10-20. Checkboxes describe implemented behavior, not a release promise.
 The full project direction remains in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
@@ -11,8 +11,9 @@ results. Existing fixed-size equity/option APIs retain their behavior. Named
 scientific datasets, quality reports and small daily/intraday study starters are
 also implemented. The local 0.1.0.dev1 snapshot packages these foundations with
 an API guide, source-distribution examples and reusable validation scripts.
-Release preparation is complete at checkpoint `f0f79a6`. Next: two reproducible
-worked studies using the delivered helpers. Strategy comparisons and performance
+Release preparation is complete at checkpoint `f0f79a6`. Next: algorithmic paper
+trading with persistent account performance and order tracking. Worked scientific
+studies follow the paper-trading milestone. Strategy comparisons and performance
 reports remain part of the backtesting backlog.
 
 Historical acquisition supports all four TRADES/MIDPOINT/BID/ASK sources and was
@@ -22,7 +23,57 @@ the TWS end-to-end workflow and three offline Chrome regressions passed.
 Live recording, bulk collection and external providers are not required. The
 obsolete recording/rotation/replay stack and recorded-quote simulator were removed.
 
-## Next milestone — two reproducible worked studies
+## Next milestone — algorithmic paper trading and account performance
+
+Priority updated 2026-10-19. Detailed design and acceptance checks are in
+[PROJECT_PLAN.md, section 24](PROJECT_PLAN.md#24-phase-6--algorithmic-paper-trading-and-account-performance).
+Read-only account tracking is implemented and API-verified. The initial paper-order
+and runner code passes offline tests; live-data observation is verified. The owner
+reports successful paper sells and an AAPL algorithmic round trip. A ten-minute
+bounded run with three filled orders completed on October 20; its explicit
+restart/resume then filled the fourth order and preserved the order cap and loss
+baseline. The separate acknowledged unfilled cancellation also passed with no
+fills, flat holdings and no pending reservation. The bounded equity workflow is
+validated; broader recovery, settlement edge cases and multi-session work remain.
+
+- [x] Shared paper/live execution design with explicit target account/funding policy
+- [x] P1: selected paper account; API values, positions and visible order snapshots
+- [x] P1: distinct broker funding fields and explicitly estimated unsettled cash
+- [x] P1: durable account history and focused cash/value/P&L charts with freshness/gaps
+- [x] P2: initial limit submit/cancel, fill/fee callbacks and durable identities (offline tested)
+- [ ] P2: settlement-aware spending checks, fees and reconciled order reservations
+- [ ] P2: startup/reconnect reconciliation without duplicate submissions
+- [x] P2: recorded order/fill history and bounded paper round-trip/cancellation checks
+- [x] P3: dedicated market feed and completed-bar above-SMA runner (observation verified)
+- [x] P3: initial lifecycle controls, limits and pause-on-disconnect (offline tested)
+- [x] Shared terminal order waits and exact-tag cancellation with confirmation
+- [x] Read-only reconciliation reporting missing/foreign working orders without resends
+- [x] Durable fill-based ownership audit and masked strategy JSON export
+- [x] In-memory pause/resume preserving risk limits; explicit strategy-owned flatten
+- [x] Versioned process checkpoint restore, paused, with risk/ownership checks and local run lease
+- [x] Offline per-run FIFO P&L, fees, exposure and observed dollar drawdown with CSV exports
+- [x] Saved bounded AAPL profile, local/read-only API preflight and launch/recovery runbook
+- [x] Owner-run ten-minute strategy session completes with filled orders and reconciled ownership
+- [x] Owner-run process restart/resume preserves ownership, loss baseline and order budget
+- [x] Separate one-share cancellation harness with exact-ID recovery and fill/timeout handling
+- [x] Owner-run acknowledged unfilled cancellation and released reservation (2026-10-20)
+- [ ] Completed-order recovery, execution corrections and multi-session baseline policy
+- [x] P3: validate bounded equity strategy orders and explicit same-day process recovery
+  - Owner-run AAPL algorithmic buy/sell round trip reconciles to -2.147077 USD net.
+    October 20 bounded run completed with three fills and one AAPL share retained.
+    Restart/resume sold that share at 340.01, reconciled flat and stopped at the
+    original four-order cap. Total net is -4.854022 USD after 4.014022 USD fees.
+    Separate cancellation check c97af579ef034829b3afd3d383c928a9 passed with broker
+    acknowledgment, zero fills, flat holdings, clear reconciliation and no pending
+    owned-order reservation. Broader automatic reconnect remains a separate item.
+- [ ] P4: account/strategy attribution, returns and drawdown with cash-flow evidence
+- [ ] P4: selected long-option execution after the shared equity lifecycle passes
+
+Account performance charts are trading observability and remain in scope. General
+chart workspace features remain removed. Paper account development/testing is
+authorized by the owner; real-money accounts are outside this milestone.
+
+## Subsequent milestone — two reproducible worked studies
 
 The study helpers and terminal examples are implemented. The next deliverables
 are documented scientific examples using those tools, rather than new estimators.
@@ -44,7 +95,7 @@ are documented scientific examples using those tools, rather than new estimators
 Acceptance: a reader can acquire bounded inputs, inspect their limitations, save
 them, and rerun each analysis offline from the same frozen collection. Neither
 example should claim causality, statistical significance or multifractality from
-the starter calculations. Advanced estimators and paper trading remain later work.
+the starter calculations. Advanced estimators remain later work. These studies follow the paper-trading milestone.
 
 ## Goal and scope
 
@@ -52,10 +103,11 @@ Make IBKR convenient to use from Python for quantitative research, backtesting
 and algorithmic trading. Users manually install `ibapi` and run logged-in
 TWS/Gateway with the account and data permissions their requests need.
 
-Charts support data inspection and research/trading results. A standalone charting
-application or TradingView replacement is not the current product objective.
-Retain the useful native Canvas renderer; prioritize new visualization features
-when they serve a concrete research or trading workflow. CI and automatic SDK
+Charts support data inspection, research/backtest results and account/order performance. A standalone charting
+application or TradingView replacement is outside project scope. The chart workspace,
+watchlist, drawing, indicator-pane and alert UI backlog has been removed. Maintain
+the existing native Canvas viewer; add visualization only for a concrete research
+or backtest result, or account/order performance tracking. CI and automatic SDK
 installation are outside current scope; keep local unit and integration checks.
 
 This extends the original v0.1 market-data/chart slice. The complete list is not
@@ -193,7 +245,6 @@ a first historical-bar option simulation is also implemented. Keep paper executi
 - [x] Opt-in quote reconnect with exact contract identity, empty replacement generations and gap history
 - [x] Frozen quote recovery verified against TWS (independent of the historical research workflow)
 - [x] Remove superseded recording/rotation/replay stack, recorded-quote simulator and generated test recordings
-- [ ] Chart bid/ask display
 - [ ] Richer liquidity models and expiry/exercise/assignment semantics within the supported data scope
 
 ## Execution architecture prerequisites
@@ -227,8 +278,8 @@ Price/time scaling, vertical panning, right space and older-history loading are
 implemented, along with optional Parquet query caching, fixed New York time labels
 and a browser trading-hours selector. Session shading, session date ticks, an
 intraday countdown, receipt-time status and automatic reconnect/backfill are now
-implemented. These support the Python data workflow. Further chart features below
-are a secondary backlog, not the next delivery milestone.
+implemented. These support the Python data workflow. Maintain these delivered
+capabilities as an optional inspection tool.
 
 - [x] Drag the price axis to scale vertically
 - [x] Vertical pan with explicit manual/automatic price-scale modes
@@ -242,60 +293,18 @@ are a secondary backlog, not the next delivery milestone.
 - [x] Provider-supplied session shading and New York day separators
 - [x] Session date ticks and session-aware intraday bar-boundary countdown
 - [x] Show subscribed/disconnected/reconnecting state, callback quiet time and unverified entitlements
-- [ ] Confirm delayed versus real-time feed types through an explicit provider signal
 - [x] Display last bar receipt time and actionable connection errors
 - [x] Reconnect, restore subscriptions and backfill gaps while retaining series/history
 
 Acceptance: scaling, panning, interval changes, history loads and live updates do
-not unexpectedly move the trader's view. Price/time coordinates stay consistent
-across both panes. Add browser regressions for those behaviors.
-
-## Supporting chart backlog: workspace
-
-- [ ] Symbol/company search with exchange, currency and instrument identification
-- [ ] Saved watchlists with sorting and last/change/volume/bid/ask/spread
-- [ ] Premarket/after-hours quote context
-- [ ] Favorite intervals and quick date ranges
-- [ ] Save/restore preferences and named workspaces across restarts
-- [ ] Fullscreen, context menus and consistent keyboard shortcuts
-- [ ] Appearance settings; line and OHLC bar styles
-- [ ] PNG and CSV exports
-
-## Supporting chart backlog: analysis tools
-
-- [ ] Horizontal/vertical lines, trend lines, rectangles, text and measurements
-- [ ] Drawing handles, candle snapping, lock/hide/delete and undo/redo
-- [ ] Persist drawings by symbol using timestamp/price anchors, with timeframe visibility
-- [ ] Drawing templates and object management
-- [ ] SMA, EMA, VWAP and Bollinger Bands overlays
-- [ ] RSI and MACD in separate resizable panes
-- [ ] Indicator parameters, styles, templates and custom Python calculations
-- [ ] Multiple resizable charts with optional symbol/time-range/crosshair synchronization
-- [ ] Comparison symbols, percentage/indexed and logarithmic scales
-
-## Monitoring and research
-
-- [ ] Price/indicator alerts with crossing and bar-close semantics
-- [ ] Python-side alert evaluation, expiration, history, sound and notifications
-- [ ] Earnings/dividend/split markers; explicit data-provider requirements
-- [ ] Explicit corporate-action adjustment settings and consistent indicator inputs
-- [ ] Historical replay with stepping and speed control
-- [ ] Research annotations, signal markers and backtest entry/exit overlays
-- [ ] Backtest performance views
-- [ ] Positions, average entry, orders and fills displayed on charts
-- [ ] Later: option chain tables, IV smiles/skew, term structure and surfaces
+not unexpectedly move the viewer's viewport. Price/time coordinates stay consistent
+across both panes. Preserve existing browser regression coverage.
 
 ## Quality and release work
 
 - Local unit, lint, typing and explicit TWS integration checks; CI is outside current scope.
 - [x] Verify base wheel assets/import/export and SDK-free tests in an isolated local environment
 - [ ] Verify clean installation and wheel assets on another machine
-- [ ] Expand renderer tests for large datasets and lengthy live sessions
-- [ ] Test data gaps, market holidays, DST, corporate actions and indicator correctness
-- [ ] Persistence recovery tests once saved workspaces exist
-- [ ] Bound live in-memory history and avoid sorting/repainting all bars on every poll
+- [ ] Explicit corporate-action adjustment settings and consistent research inputs
+- [ ] Test data gaps, market holidays, DST, corporate actions and research calculation correctness
 - [ ] Decide release metadata, supported Python/OS matrix and dependency constraints
-
-Future chart-workspace acceptance: prepare a watchlist, inspect research signals
-and results, and retain useful annotations. This follows the Python research and
-backtesting milestones.

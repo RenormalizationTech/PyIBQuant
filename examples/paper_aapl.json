@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "symbol": "AAPL",
+  "host": "127.0.0.1",
+  "port": 7497,
+  "broker_client_id": 276,
+  "market_client_id": 277,
+  "preflight_client_id": 288,
+  "account": null,
+  "journal": "../charts/paper/strategy.sqlite3",
+  "window": 20,
+  "quantity": 1,
+  "max_order_value": 500,
+  "max_orders": 4,
+  "max_session_loss": 25,
+  "max_data_age": 15,
+  "seconds": 600,
+  "cancel_on_stop": true
+}
