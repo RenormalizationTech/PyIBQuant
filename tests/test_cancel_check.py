@@ -18,11 +18,73 @@ from pyibquant.trading.cancel_check import (
     CancellationPlan,
     check_tag,
     execute_check,
+    execute_disconnect_check,
     finish_check,
     flat_preflight,
     make_plan,
 )
 from pyibquant.trading.profile import PaperProfile
+
+
+def test_disconnect_after_send_retains_one_intent_and_never_cancels_or_retries(broker, plan):
+    def disconnect():
+        broker._adapter.isConnected.return_value = False
+        broker.enqueue("disconnected", dict(message="injected socket loss"))
+        drain(broker)
+
+    broker._adapter.disconnect = Mock(side_effect=disconnect)
+    original = broker._adapter.send_order
+    result = execute_disconnect_check(broker, plan)
+    assert result["outcome"] == "disconnected_after_send" and result["needs_recovery"]
+    assert not result["passed"] and result["send_attempts"] == 1
+    assert result["status"] == "UnknownSend"
+    assert broker._adapter.send_order is original
+    original.assert_called_once()
+    broker._adapter.cancel_order.assert_not_called()
+    assert broker.funding()["pending_owned_order"]
+    with pytest.raises(BrokerError, match="already has an order"):
+        execute_disconnect_check(broker, plan)
+    original.assert_called_once()
+
+
+def test_disconnect_recovery_missing_order_blocks_cancellation_and_replacement(broker, plan):
+    broker._adapter.disconnect = Mock()
+    execute_disconnect_check(broker, plan)
+    with pytest.raises(BrokerError, match="remains missing"):
+        finish_check(broker, plan.check_id)
+    broker._adapter.cancel_order.assert_not_called()
+    broker._adapter.send_order.assert_called_once()
+
+
+def test_disconnect_recovery_observes_original_then_cancels_exact_order(broker, plan):
+    broker._adapter.disconnect = Mock()
+    execute_disconnect_check(broker, plan)
+    original_refresh = broker._adapter.refresh
+
+    def refresh(account):
+        original_refresh(account)
+        broker.enqueue("order", dict(
+            account=broker.account, order_id=10, client_id=272, status="Submitted",
+            order_ref="pyibquant:" + plan.check_id, filled="0", remaining="1",
+        ))
+        drain(broker)
+
+    broker._adapter.refresh = refresh
+    cancel(broker)
+    result = finish_check(broker, plan.check_id)
+    assert result["passed"] and result["acknowledged"] and result["flat"]
+    broker._adapter.send_order.assert_called_once()
+    broker._adapter.cancel_order.assert_called_once_with(10)
+
+
+def test_transport_failure_before_injection_remains_unconfirmed_without_an_extra_send(broker, plan):
+    broker._adapter.send_order.side_effect = OSError("original socket write failed")
+    broker._adapter.disconnect = Mock()
+    with pytest.raises(BrokerError, match="unknown"):
+        execute_disconnect_check(broker, plan)
+    broker._adapter.send_order.assert_called_once()
+    broker._adapter.disconnect.assert_not_called()
+    broker._adapter.cancel_order.assert_not_called()
 
 
 @pytest.fixture

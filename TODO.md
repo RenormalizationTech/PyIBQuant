@@ -36,6 +36,12 @@ baseline. The separate acknowledged unfilled cancellation also passed with no
 fills, flat holdings and no pending reservation. The bounded equity workflow is
 validated; broader recovery, settlement edge cases and multi-session work remain.
 
+Stop checkpoint, 2026-10-20: the owner is pausing work here. Basic algorithmic
+AAPL stock paper trading is live-validated; normal strategy orders are automatic.
+Selected option execution/cancellation is validated separately, without an option
+strategy runner. Restart instructions and final account/process state are at the
+top of HANDOFF.md. Unattended recovery across failures/sessions remains future work.
+
 - [x] Shared paper/live execution design with explicit target account/funding policy
 - [x] P1: selected paper account; API values, positions and visible order snapshots
 - [x] P1: distinct broker funding fields and explicitly estimated unsettled cash
@@ -67,7 +73,77 @@ validated; broader recovery, settlement edge cases and multi-session work remain
     acknowledgment, zero fills, flat holdings, clear reconciliation and no pending
     owned-order reservation. Broader automatic reconnect remains a separate item.
 - [ ] P4: account/strategy attribution, returns and drawdown with cash-flow evidence
-- [ ] P4: selected long-option execution after the shared equity lifecycle passes
+- [x] P4: initial selected long-option execution after the shared equity lifecycle passes
+  (one-contract bounded harness; automated option strategies remain separate)
+
+Market-session continuation, 2026-10-20:
+
+- [x] Fresh AAPL stock and selected 2026-11-20 340 C live bid/ask, sizes and option Greeks
+- [x] Live stock/option stream reconnect preserves identity/cursors and records closed gaps
+- [x] Observation runner produces completed-bar signals before/after data recovery;
+  explicit pause/resume and stop suppress decisions; recovery leaves the runner paused
+- [x] Data-only bar reconnect/backfill with retained yearly history
+- [x] Read-only completed-order coverage probe reaches its barrier (five AAPL records)
+- [x] Longer human-run bounded paper session, then account/run performance review:
+  run d547a4da804c4e5891518952953d0e4c completed 30 minutes, 30 signals and four
+  fills; flat, ledger complete, gross -0.25 USD, fees 4.014050, net -4.264050
+- [x] Bounded execution-enabled pause/resume controls and broker disconnect-after-send
+  recovery acceptance; broader automatic broker reconnect remains separate
+- [x] Integrate exact-identity completed-order recovery; read-only TWS reconciliation
+  matched nine records, and reconstructed missing cancellation callbacks recovered
+  Submitted to Cancelled with no orders sent and no pending reservation
+- [ ] Full historical coverage and execution-correction handling. Filled TWS records
+  can report totalQuantity=0; recovery preserves the durable submitted quantity
+- [x] Prepare one-send broker disconnect harness and exact-ID recovery; offline tested
+- [x] Owner-run disconnect-after-send and exact-ID recovery: check
+  417b80ac0fcf47958f2c59a89f79f427, client 297 order 2, one send attempt,
+  UnknownSend recovered to broker-observed order, canceled unfilled, flat,
+  reconciliation clear and no pending reservation; no replacement submission
+- [x] Prepare execution-enabled runner pause/resume check across a live candle;
+  offline tests cover frozen baseline, configuration, budget, cursor and no signals
+  during pause, explicit resume and a subsequent new signal
+- [x] Owner-run execution controls: 77d386816acd417e94d29b1545d9b339, ten minutes,
+  paused/resumed/passed; nine signals, unchanged baseline/caps, one BUY fill at
+  341.25; one owned share retained at stop (exit remains an explicit action)
+- [x] Read-only exact-run flatten plan and restored-checkpoint ordering regression
+- [x] Owner-run strategy-owned flatten for 77d386816acd417e94d29b1545d9b339:
+  SELL one at 340.03, gross -1.22 USD, fees 2.007011, net -3.227011;
+  strategy/account flat, ledger complete and no pending reservation
+- [x] Initial selected-option order API: shared durable send/cancel/reconciliation,
+  exact contract and broker SMART tick ladder, multiplier-aware premium/funding/P&L,
+  one long contract, owned exits and expiry-day refusal (offline tested)
+- [x] Read-only option round-trip preflight: AAPL 2026-11-20 365 C, conId 845042384,
+  multiplier 100; nickel-grid BUY 2.30 / exit reference 2.15, premium 230 USD,
+  quoted spread/fee estimate 19 USD under the configured 25 USD budget
+- [x] Owner-run one-contract option BUY/SELL check e7c2452026e5459d845a3214ff0bfc8a:
+  AAPL 2026-11-20 365 C, BUY 2.32 / SELL 2.17, gross -15 USD, fees 1.535070,
+  net -16.535070; complete ledger, account/strategy flat, no pending reservation.
+  Fresh read-only post-option preflight is clear. This is a manual bounded lifecycle
+  harness; automated option strategies remain separate.
+- [x] Owner-run acknowledged unfilled option cancellation c7a050a5fbad4f7f807738fc3ef9383e:
+  client 311 order 3, BUY one at 1.95, Cancelled with zero fills; multiplier-based
+  reservation 197 USD (195 premium plus 2 fee allowance) released to zero,
+  complete zero-execution ledger, account flat and reconciliation clear.
+  Fresh read-only post-option-cancellation preflight passes with zero working,
+  missing or foreign orders. Fill-race retention remains offline tested.
+- [x] Fix legacy UnknownSend replay across API client IDs: source-session identity
+  prevents a false foreign-order duplicate; fresh read-only preflight and offline
+  replay confirm no unresolved orders after the recovery check
+- SPY live API quotes remain blocked by IBKR 10089 (ARCA/TOP/ALL). Owner chose to
+  continue with AAPL and leave SPY blocked; no entitlement change is assumed.
+
+The bounded AAPL live-session acceptance checks above are complete. Remaining
+broader milestone items are not certified by these checks: settlement calendars
+and next-day cash release, natural partial fills/execution corrections, full
+historical recovery coverage, automatic broker reconnect during execution,
+multi-session baselines, verified cash-flow-adjusted returns and automated option
+strategies. No additional paper orders are needed to repeat completed acceptance.
+
+Reusable read-only checks: `tests/live_session_controls_check.py` and
+`tests/live_completed_orders_check.py`. Evidence is under ignored
+`charts/paper/live-session-controls-2026-10-20/` and
+`charts/paper/completed-order-coverage-2026-10-20/`. These checks never submit or
+cancel broker orders and do not validate execution-enabled runner recovery.
 
 Account performance charts are trading observability and remain in scope. General
 chart workspace features remain removed. Paper account development/testing is

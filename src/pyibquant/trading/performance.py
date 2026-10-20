@@ -53,7 +53,7 @@ is inferred.</p>
 <div id="run-cards" class="cards"></div><h3>Run P&amp;L · net / realized</h3>
 <canvas id="run-pnl"></canvas><h3>Owned gross exposure · last observed marks</h3>
 <canvas id="run-exposure"></canvas><h3>Run orders</h3><div id="run-orders" class="scroll"></div>
-<h3>Owned shares and observed marks</h3><div id="run-positions" class="scroll"></div>
+<h3>Owned quantities and observed marks</h3><div id="run-positions" class="scroll"></div>
 <h3>Run executions and fees</h3><div id="run-fills" class="scroll"></div>
 <p id="run-issues" class="warning"></p></section>
 <section><h2>Positions</h2><div id="positions" class="scroll"></div></section>
@@ -142,10 +142,13 @@ b.textContent=fmt(v);div.append(title,b);cards.append(div)});
 chart('value',d.points,['value']);chart('cash',d.points,['cash']);
 chart('pnl',d.points,['daily','unrealized','realized']);
 drawRuns(d);
-table('positions',s.positions,['symbol','asset_type','quantity','average_cost','market_value',
-'unrealized_pnl','currency']);table('orders',s.orders,['order_id','client_id','symbol','side',
+table('positions',s.positions,['symbol','local_symbol','asset_type','multiplier','quantity',
+'average_cost','market_value',
+'unrealized_pnl','currency']);table('orders',s.orders,['order_id','client_id','symbol','local_symbol',
+'multiplier','side',
 'quantity','limit_price','status','filled','remaining','tag']);table('executions',s.executions,
-['exec_id','symbol','side','quantity','price','commission','fee_currency','broker_time']);
+['exec_id','symbol','local_symbol','multiplier','side','quantity','price','commission',
+'fee_currency','broker_time']);
 table('fields',s.values.filter(v=>['NetLiquidation','TotalCashValue','SettledCash',
 'BuyingPower','AvailableFunds','AccountType','SettledCashByDate'].includes(v.tag)),
 ['tag','currency','value','received_at','source']);document.getElementById('errors').textContent=s.errors.join('\n')}

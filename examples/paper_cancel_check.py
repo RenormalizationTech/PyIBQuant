@@ -16,6 +16,7 @@ from pyibquant.broker import mask_account_data
 from pyibquant.trading.cancel_check import (
     check_tag,
     execute_check,
+    execute_disconnect_check,
     finish_check,
     flat_preflight,
     make_plan,
@@ -35,7 +36,13 @@ def main() -> None:
     parser.add_argument("--profile", type=Path, default=Path(__file__).with_name("paper_aapl.json"))
     parser.add_argument("--execute", action="store_true", help="Enable one bounded paper check")
     parser.add_argument("--resume-check", help="Exact prior check ID; never submits another order")
+    parser.add_argument(
+        "--disconnect-after-send", action="store_true",
+        help="With --execute: one send, disconnect own socket, then require exact-ID recovery",
+    )
     args = parser.parse_args()
+    if args.disconnect_after_send and (not args.execute or args.resume_check):
+        parser.error("--disconnect-after-send requires --execute and cannot use --resume-check")
     try:
         profile = PaperProfile.load(args.profile)
         if args.resume_check:
@@ -94,12 +101,15 @@ def main() -> None:
                         )
                         print(f"Check ID: {check_id}", flush=True)
                         result = (
-                            execute_check(broker, plan)
+                            (
+                                execute_disconnect_check(broker, plan)
+                                if args.disconnect_after_send else execute_check(broker, plan)
+                            )
                             if args.execute
                             else dict(
                                 check_id=check_id,
                                 outcome="preflight_only",
-                            preflight_ready=True,
+                                preflight_ready=True,
                                 passed=False,
                                 order_transmission=False,
                             )

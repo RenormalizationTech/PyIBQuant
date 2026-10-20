@@ -402,27 +402,26 @@ class EquityRunner:
             self._log("runner_resume", skipped_through=self._seen.isoformat())
             self._checkpoint()
 
-    def flatten(self, series: BarSeries, quote: Quote, *, at: datetime | None = None) -> int | None:
-        """Pause and submit one bounded limit sell for this run's reconciled holdings.
-
-        Returns an order ID, not a confirmed liquidation. Pending orders must be
-        resolved separately; external/mixed positions are refused. Observation
-        runs cannot trade. No change to the loss baseline or normal order budget.
-        """
+    def flatten_plan(
+        self, series: BarSeries, quote: Quote, *, at: datetime | None = None
+    ) -> dict[str, Any]:
+        """Read-only bounded exit plan from fresh reconciliation and owned fills."""
+        real_clock = at is None
         at = at or datetime.now(UTC)
         with self._lock:
-            self._require_execution()
             if self.config.dry_run or self._seen is None:
                 raise BrokerError("Flatten requires a previously started execution run")
             if at.utcoffset() is None:
                 raise ValueError("Runner clock must be timezone aware")
-            self.pause("Explicit strategy flatten requested")
             report = self.broker.reconcile()
+            if real_clock:
+                at = datetime.now(UTC)
             if not report.clear:
                 raise BrokerError("Resolve working or uncertain orders before flattening")
             if (
                 series.symbol != self.config.symbol
                 or series.instrument_id is None
+                or series.instrument_id != self._instrument_id
                 or quote.instrument.symbol != self.config.symbol
                 or quote.instrument.instrument_id != series.instrument_id
             ):
@@ -448,7 +447,9 @@ class EquityRunner:
                     "Strategy fills and account holdings differ; no flatten order sent"
                 )
             if owned == 0:
-                return None
+                return dict(run_id=self.run_id, symbol=self.config.symbol, quantity=0,
+                            con_id=series.instrument_id, side="SELL", limit_price=None,
+                            checked_at=at.isoformat())
             receipts = dict(quote.field_received_at)
             if (
                 quote.market_data_type != "live"
@@ -475,6 +476,23 @@ class EquityRunner:
             )
             if owned > self._quantity_cap or price * owned > self._order_cap:
                 raise BrokerError("Restored run's order quantity/notional cap exceeded")
+            return dict(
+                run_id=self.run_id, symbol=self.config.symbol, con_id=series.instrument_id,
+                quantity=int(owned), side="SELL", limit_price=str(price),
+                checked_at=at.isoformat(), bid=quote.bid, ask=quote.ask,
+                max_order_value=str(self._order_cap),
+            )
+
+    def flatten(self, series: BarSeries, quote: Quote, *, at: datetime | None = None) -> int | None:
+        """Pause and submit one bounded limit sell for reconciled strategy holdings.
+
+        Returns an order ID, not confirmed liquidation. No baseline reset or
+        automatic replacement. External/mixed positions remain refused.
+        """
+        with self._lock:
+            self._require_execution()
+            if self.config.dry_run or self._seen is None:
+                raise BrokerError("Flatten requires a previously started execution run")
             self._lease.acquire()
             try:
                 self._check_restored_state()
@@ -482,16 +500,21 @@ class EquityRunner:
                 self._lease.release()
                 raise
             self._restored_checkpoint = None
+            self.pause("Explicit strategy flatten requested")
+            plan = self.flatten_plan(series, quote, at=at)
+            if plan["quantity"] == 0:
+                return None
             oid = self.broker.submit_limit(
                 self.config.symbol,
                 "SELL",
-                int(owned),
-                float(price),
+                plan["quantity"],
+                float(plan["limit_price"]),
                 tag=self.run_id,
                 key="flatten:" + uuid4().hex,
             )
             self._orders += 1
-            self._log("runner_flatten", order_id=oid, quantity=str(owned), limit_price=str(price))
+            self._log("runner_flatten", order_id=oid,
+                      quantity=str(plan["quantity"]), limit_price=plan["limit_price"])
             self._checkpoint()
             return oid
 

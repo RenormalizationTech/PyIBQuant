@@ -8,6 +8,19 @@ from decimal import Decimal
 from typing import Any
 
 
+def contract_multiplier(row: Mapping[str, Any]) -> Decimal | None:
+    """Equities are per share; options require a positive explicit multiplier."""
+    from ..broker import money
+
+    asset = row.get("asset_type", "STK")
+    if asset == "STK":
+        return Decimal(1)
+    if asset == "OPT":
+        value = money(row.get("multiplier"))
+        return value if value is not None and value > 0 else None
+    return None
+
+
 @dataclass(frozen=True)
 class StrategyLedger:
     tag: str
@@ -60,6 +73,7 @@ def strategy_ledger(
     fees_known, count = True, 0
     issues = []
     for key, order in selected.items():
+        multiplier = contract_multiplier(order)
         fills = [e for e in executions if (e.get("client_id"), e.get("order_id")) == key]
         filled = Decimal(0)
         for fill in fills:
@@ -75,6 +89,7 @@ def strategy_ledger(
                 or sign != expected_sign
                 or fill.get("con_id") != order.get("con_id")
                 or fill.get("currency") != "USD"
+                or multiplier is None or contract_multiplier(fill) != multiplier
                 or (fill.get("order_ref") and fill["order_ref"] != order.get("order_ref"))
             ):
                 issues.append(
@@ -84,7 +99,7 @@ def strategy_ledger(
             filled += quantity
             con_id = int(fill["con_id"])
             positions[con_id] = positions.get(con_id, Decimal(0)) + sign * quantity
-            cash_flow -= sign * quantity * price
+            cash_flow -= sign * quantity * price * multiplier
             count += 1
             fee = money(fill.get("commission"))
             if fee is None or fill.get("fee_currency") != "USD":

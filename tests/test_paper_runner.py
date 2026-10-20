@@ -324,6 +324,32 @@ def test_flatten_requires_fresh_quote_and_observation_cannot_trade(broker):
     assert broker._adapter.send_order.call_count == 1
 
 
+def test_restored_run_can_plan_readonly_and_flatten_without_invalidating_its_checkpoint(broker):
+    series = feed()
+    runner = running(broker, series, dry=False)
+    broker.submit_limit("AAPL", "BUY", 1, 100, tag=runner.run_id)
+    broker._record("execution", dict(
+        exec_id="owned", order_id=10, client_id=272, con_id=100,
+        currency="USD", side="BOT", quantity="1", price="100", cumulative_quantity="1",
+    ))
+    preserve_position_refresh(broker, "1")
+    runner.stop()
+    restored = EquityRunner.restore(broker, runner.run_id)
+    checkpoint = restored._restored_checkpoint
+    broker.readonly = True
+    plan = restored.flatten_plan(series, quote(), at=T)
+    assert plan["quantity"] == 1 and plan["side"] == "SELL"
+    assert restored.status == "paused" and restored._restored_checkpoint == checkpoint
+    assert restored._pnl_baseline == 0 and restored._orders == 1
+    assert broker._adapter.send_order.call_count == 1
+    broker.readonly = False
+    broker._adapter.allocate_id.return_value = 11
+    assert restored.flatten(series, quote(), at=T) == 11
+    assert restored._pnl_baseline == 0 and restored._orders == 2
+    assert restored._restored_checkpoint is None
+    restored.stop()
+
+
 def moving_clock(monkeypatch, *times):
     real_datetime = datetime
     ticks = iter(times)

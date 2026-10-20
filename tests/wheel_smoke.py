@@ -31,8 +31,8 @@ from pyibquant.quotes import QuoteInstrument, _QuoteState
 from pyibquant.research import simple_returns, sma
 from pyibquant.simulation import Feed, NextOpen, TargetStrategy, simulate
 from pyibquant.studies import daily_correlations, intraday_scaling
-from pyibquant.trading.profile import PaperProfile
 from pyibquant.trading.cancel_check import check_tag
+from pyibquant.trading.profile import PaperProfile
 
 assert Path(pyibquant.__file__).is_relative_to(Path(sys.prefix)), pyibquant.__file__
 assert importlib.util.find_spec('ibapi') is None, 'Use an environment without the SDK'

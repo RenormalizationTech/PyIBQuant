@@ -16,6 +16,7 @@ from ibapi.order import Order
 from ibapi.wrapper import EWrapper
 
 from ..broker import BrokerError, money
+from ..quotes import Option
 
 if tuple(int(v) for v in get_version_string().split(".")[:2]) < (10, 33):
     raise ImportError("PaperBroker requires the official TWS API 10.33 or newer")
@@ -60,8 +61,65 @@ class BrokerAdapter(EWrapper, EClient):
         self._contract_id = -1
         self._contract_done = Event()
         self._contracts: list[Any] = []
+        self._details: list[Any] = []
+        self._rules: dict[int, tuple[tuple[Decimal, Decimal], ...]] = {}
+        self._rule_done = Event()
+        self._rule_id = -1
         self._contract_error: str | None = None
         self._closing = False
+        self._completed_lock = Lock()
+        self._completed_done = Event()
+        self._completed_busy = False
+        self._completed_failed = False
+        self._completed_rows: list[dict[str, Any]] = []
+
+    def completed_orders(self, account: str) -> list[dict[str, Any]]:
+        """Serialized read-only download. A timed-out untagged request cannot be reused."""
+        with self._completed_lock:
+            if self._completed_busy or self._completed_failed:
+                raise BrokerError("Completed-order request unresolved; open a new broker session")
+            if not self.isConnected():
+                raise BrokerError("Broker is disconnected")
+            self._completed_busy = True
+            self._completed_rows = []
+            self._completed_done.clear()
+        try:
+            self.reqCompletedOrders(False)
+            if not self._completed_done.wait(self.timeout) or not self.isConnected():
+                raise BrokerError("Completed-order download incomplete; no terminal state inferred")
+            with self._completed_lock:
+                return [dict(row) for row in self._completed_rows if row["account"] == account]
+        except BaseException:
+            with self._completed_lock:
+                self._completed_failed = True
+            raise
+        finally:
+            with self._completed_lock:
+                self._completed_busy = False
+
+    def completedOrder(self, contract: Any, order: Any, orderState: Any) -> None:
+        with self._completed_lock:
+            if not self._completed_busy or self._completed_failed or self._completed_done.is_set():
+                return
+            self._completed_rows.append(dict(
+                account=order.account,
+                **instrument(contract),
+                order_id=order.orderId,
+                client_id=order.clientId,
+                perm_id=order.permId,
+                order_ref=order.orderRef,
+                side=order.action,
+                quantity=number(order.totalQuantity),
+                filled=number(order.filledQuantity),
+                status=orderState.status,
+                completed_time=orderState.completedTime,
+                completed_status=orderState.completedStatus,
+            ))
+
+    def completedOrdersEnd(self) -> None:
+        with self._completed_lock:
+            if self._completed_busy and not self._completed_failed:
+                self._completed_done.set()
 
     def open(self) -> list[str]:
         self.connect(self.host, self.port, self.client_id)
@@ -358,6 +416,7 @@ class BrokerAdapter(EWrapper, EClient):
         self._request += 1
         self._contract_id = self._request
         self._contracts = []
+        self._details = []
         self._contract_error = None
         self._contract_done.clear()
         c = Contract()
@@ -372,9 +431,72 @@ class BrokerAdapter(EWrapper, EClient):
             raise BrokerError("Only resolved USD equities are supported")
         return result
 
+    def resolve_option(self, selector: Option) -> tuple[Any, tuple[tuple[Decimal, Decimal], ...]]:
+        """Resolve an exact USD option plus its SMART price-increment ladder."""
+        self._request += 1
+        self._contract_id = self._request
+        self._contract_done.clear()
+        self._contracts, self._details = [], []
+        self._contract_error = None
+        c = Contract()
+        c.symbol, c.secType, c.currency, c.exchange = selector.symbol, "OPT", "USD", "SMART"
+        c.lastTradeDateOrContractMonth = selector.expiry.strftime("%Y%m%d")
+        c.strike, c.right, c.tradingClass = selector.strike, selector.right, selector.trading_class
+        if selector.multiplier is not None:
+            c.multiplier = str(selector.multiplier)
+        self.reqContractDetails(self._contract_id, c)
+        if not self._contract_done.wait(self.timeout) or self._contract_error:
+            raise BrokerError(self._contract_error or "Option resolution incomplete")
+        if len(self._details) != 1:
+            raise BrokerError("Option must resolve to exactly one contract")
+        detail = self._details[0]
+        contract = detail.contract
+        multiplier = money(contract.multiplier)
+        if (
+            contract.secType != "OPT" or contract.currency != "USD" or contract.conId <= 0
+            or contract.symbol != selector.symbol or contract.right != selector.right
+            or money(contract.strike) != money(selector.strike)
+            or contract.lastTradeDateOrContractMonth[:8] != selector.expiry.strftime("%Y%m%d")
+            or multiplier is None or multiplier <= 0
+            or (selector.multiplier is not None and multiplier != money(selector.multiplier))
+            or (selector.trading_class and contract.tradingClass != selector.trading_class)
+        ):
+            raise BrokerError("Resolved option identity or multiplier mismatch")
+        venues = detail.validExchanges.split(",")
+        rule_ids = detail.marketRuleIds.split(",")
+        if len(venues) != len(rule_ids) or "SMART" not in venues:
+            raise BrokerError("No explicit SMART option tick rule")
+        raw_rule = rule_ids[venues.index("SMART")]
+        if not raw_rule.isdigit() or int(raw_rule) <= 0:
+            raise BrokerError("Missing SMART option tick rule")
+        rule_id = int(raw_rule)
+        if rule_id not in self._rules:
+            self._rule_id = rule_id
+            self._rule_done.clear()
+            self.reqMarketRule(rule_id)
+            if not self._rule_done.wait(self.timeout):
+                raise BrokerError("Option price-increment download incomplete")
+        rules = self._rules.get(rule_id, ())
+        if not rules or rules[0][0] != 0:
+            raise BrokerError("Invalid or missing option price-increment ladder")
+        contract.exchange = "SMART"
+        return contract, rules
+
+    def marketRule(self, marketRuleId: int, priceIncrements: list[Any]) -> None:
+        if marketRuleId != self._rule_id:
+            return
+        rows = [(money(p.lowEdge), money(p.increment)) for p in priceIncrements]
+        if rows and all(edge is not None and edge >= 0 and tick is not None and tick > 0
+                        for edge, tick in rows):
+            valid = [(edge, tick) for edge, tick in rows if edge is not None and tick is not None]
+            if all(valid[i][0] < valid[i + 1][0] for i in range(len(valid) - 1)):
+                self._rules[marketRuleId] = tuple(valid)
+        self._rule_done.set()
+
     def contractDetails(self, reqId: int, contractDetails: Any) -> None:
         if reqId == self._contract_id:
             self._contracts.append(contractDetails.contract)
+            self._details.append(contractDetails)
 
     def contractDetailsEnd(self, reqId: int) -> None:
         if reqId == self._contract_id:

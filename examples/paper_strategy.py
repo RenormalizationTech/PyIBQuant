@@ -18,6 +18,7 @@ from time import monotonic, sleep
 
 from pyibquant import BrokerError, Market, PaperBroker
 from pyibquant.broker import money
+from pyibquant.trading.control_check import RunnerControlCheck
 from pyibquant.trading.performance import serve
 from pyibquant.trading.profile import PaperProfile
 from pyibquant.trading.runner import EquityRunner
@@ -112,6 +113,10 @@ def main() -> None:
     )
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--execute", action="store_true", help="Enable paper order submission")
+    parser.add_argument(
+        "--check-controls", action="store_true",
+        help="With --execute: pause across a candle, resume and verify a new signal",
+    )
     parser.add_argument("--cancel-on-stop", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument(
         "--close-existing-share",
@@ -120,6 +125,8 @@ def main() -> None:
     )
     parser.add_argument("--journal", type=Path)
     args = parser.parse_args()
+    if args.check_controls and (not args.execute or args.resume_run or args.close_existing_share):
+        parser.error("--check-controls requires a new --execute run without starting-share close")
     try:
         profile = (
             PaperProfile.load(args.profile)
@@ -135,6 +142,8 @@ def main() -> None:
         )
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
+    if args.check_controls and profile.seconds < 240:
+        parser.error("--check-controls requires at least 240 seconds for live candle boundaries")
     if args.cancel_on_stop is True and not args.execute:
         parser.error("--cancel-on-stop requires --execute")
     cancel_on_stop = args.execute and (
@@ -224,12 +233,23 @@ def main() -> None:
                         ),
                         flush=True,
                     )
-                    finish = monotonic() + profile.seconds
+                    started = monotonic()
+                    finish = started + profile.seconds
+                    controls = RunnerControlCheck(runner) if args.check_controls else None
                     sequence = broker.snapshot().sequence
-                    while monotonic() < finish and runner.status == "running":
+                    while monotonic() < finish and (
+                        runner.status == "running"
+                        or (controls is not None and controls.phase == "paused")
+                    ):
                         runner.step(series, stream.latest())
+                        if controls is not None:
+                            event = controls.tick(series, elapsed=monotonic() - started)
+                            if event:
+                                print(f"Execution control check: {event}", flush=True)
                         snapshot = broker.wait_for_update(sequence, timeout=0.25)
                         sequence = snapshot.sequence
+                    if controls is not None and not controls.passed:
+                        raise BrokerError(f"Control check incomplete: {controls.phase}")
                     print(
                         f"Runner {runner.status}: {runner.reason or 'bounded run complete'}",
                         flush=True,

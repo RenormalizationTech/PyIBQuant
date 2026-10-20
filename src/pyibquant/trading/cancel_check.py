@@ -164,6 +164,22 @@ def _result(broker: PaperBroker, check_id: str, *, acknowledged: bool) -> dict[s
 
 def finish_check(broker: PaperBroker, check_id: str) -> dict[str, Any]:
     """Resume cancellation only. Never submits a new order or unwinds a fill."""
+    disconnected_check = any(
+        e["kind"] == "cancel_check_disconnect" and e["payload"].get("check_id") == check_id
+        for e in broker.journal.events(broker.account)
+    )
+    if disconnected_check:
+        report = broker.reconcile()
+        order = owned_check_order(broker, check_id)
+        if any(o.get("tag") == check_tag(check_id) for o in report.missing_orders):
+            raise BrokerError("Original send remains missing; no cancellation or replacement sent")
+        if report.foreign_orders:
+            raise BrokerError("Resolve foreign working orders before recovering this check")
+        if order.get("status") in {"Submitted", "PreSubmitted", "Cancelled", "ApiCancelled"}:
+            broker._record("cancel_check_ack", dict(
+                check_id=check_id, order_id=order["order_id"], status=order["status"],
+                source="fresh_recovery_download",
+            ))
     order = owned_check_order(broker, check_id)
     acknowledged = any(
         e["kind"] == "cancel_check_ack" and e["payload"].get("check_id") == check_id
@@ -180,7 +196,7 @@ def finish_check(broker: PaperBroker, check_id: str) -> dict[str, Any]:
     return result
 
 
-def execute_check(broker: PaperBroker, plan: CancellationPlan) -> dict[str, Any]:
+def _prepare_check(broker: PaperBroker, plan: CancellationPlan) -> None:
     if broker.readonly:
         raise BrokerError("Cancellation check execution requires an enabled paper broker")
     check_tag(plan.check_id)
@@ -194,6 +210,55 @@ def execute_check(broker: PaperBroker, plan: CancellationPlan) -> dict[str, Any]
     if contract.conId != plan.con_id:
         raise BrokerError("Cancellation plan contract differs from broker resolution")
     broker._record("cancel_check_plan", plan.to_dict())
+
+
+def execute_disconnect_check(broker: PaperBroker, plan: CancellationPlan) -> dict[str, Any]:
+    """One send followed by own-socket loss; recovery is a separate human-run command.
+
+    Intentionally leaves a possibly working DAY order. No cancellation, replacement
+    or automatic reconnect occurs here. A fill can occur and is never auto-reversed.
+    """
+    _prepare_check(broker, plan)
+    broker._record("cancel_check_disconnect", dict(
+        check_id=plan.check_id, policy="One send; disconnect; explicit exact-ID recovery"
+    ))
+    adapter = broker._adapter
+    original = adapter.send_order
+    injected = False
+
+    def send_then_disconnect(*args: Any) -> None:
+        nonlocal injected
+        original(*args)
+        injected = True
+        adapter.disconnect()
+        raise OSError("Intentional local socket loss immediately after send")
+
+    adapter.send_order = send_then_disconnect
+    try:
+        try:
+            broker.submit_limit(
+                plan.symbol, "BUY", 1, float(plan.limit_price), tag=plan.tag, key=plan.check_id
+            )
+        except BrokerError:
+            if not injected:
+                raise
+        else:
+            raise BrokerError("Disconnect injection did not produce an uncertain send")
+    finally:
+        adapter.send_order = original
+    order = owned_check_order(broker, plan.check_id)
+    result = dict(
+        check_id=plan.check_id, passed=False, outcome="disconnected_after_send",
+        order_id=order["order_id"], status=order.get("status"),
+        order_transmission=True, send_attempts=1, needs_recovery=True,
+        recovery="Run --resume-check with this exact check ID; never submit a replacement",
+    )
+    broker._record("cancel_check_result", result)
+    return result
+
+
+def execute_check(broker: PaperBroker, plan: CancellationPlan) -> dict[str, Any]:
+    _prepare_check(broker, plan)
     try:
         oid = broker.submit_limit(
             plan.symbol,

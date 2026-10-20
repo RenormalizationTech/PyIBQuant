@@ -1,9 +1,13 @@
 """SDK callback translation and cancellation compatibility, with no network."""
 
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
+from pyibquant import BrokerError, Option
 from pyibquant.trading.ibkr import BrokerAdapter
 
 
@@ -131,3 +135,74 @@ def test_summary_subscription_rejection_fails_sync_immediately():
     a._summary_id = 9030
     a.error(9030, 0, 322, "ReqAccountSummary: Maximum number of requests exceeded")
     assert a.sink.call_args.args[1]["fatal"]
+
+
+def test_completed_download_filters_accounts_and_requires_end_barrier():
+    a = adapter()
+    order = SimpleNamespace(
+        account="DU123", orderId=10, clientId=272, permId=50,
+        orderRef="pyibquant:test", action="BUY", totalQuantity=Decimal(0),
+        filledQuantity=Decimal(1),
+    )
+    state = SimpleNamespace(status="Filled", completedTime="today", completedStatus="Filled")
+
+    def download(api_only):
+        assert api_only is False
+        a.completedOrder(contract(), order, state)
+        a.completedOrdersEnd()
+        a.completedOrder(contract(), order, state)  # Late callback cannot enter the batch.
+
+    a.reqCompletedOrders = Mock(side_effect=download)
+    rows = a.completed_orders("DU123")
+    assert len(rows) == 1 and rows[0]["quantity"] == "0" and rows[0]["filled"] == "1"
+    assert a.completed_orders("DUOTHER") == []
+
+
+def test_completed_download_timeout_cannot_be_retried_or_completed_by_late_barrier():
+    a = adapter()
+    a.timeout = .001
+    a.reqCompletedOrders = Mock()
+    with pytest.raises(BrokerError, match="incomplete"):
+        a.completed_orders("DU123")
+    a.completedOrdersEnd()
+    with pytest.raises(BrokerError, match="new broker session"):
+        a.completed_orders("DU123")
+    a.reqCompletedOrders.assert_called_once_with(False)
+
+
+def test_option_resolution_downloads_smart_price_ladder_and_preserves_identity():
+    a = adapter()
+    selector = Option("AAPL", date(2026, 11, 20), 360, "C", "AAPL", 100)
+
+    def resolve(req_id, c):
+        c.conId = 200
+        c.localSymbol = "AAPL option"
+        a.contractDetails(req_id, SimpleNamespace(
+            contract=c, validExchanges="SMART,CBOE", marketRuleIds="26,27"
+        ))
+        a.contractDetailsEnd(req_id)
+
+    a.reqContractDetails = Mock(side_effect=resolve)
+    a.reqMarketRule = Mock(side_effect=lambda rid: a.marketRule(rid, [
+        SimpleNamespace(lowEdge=0, increment=.01), SimpleNamespace(lowEdge=3, increment=.05)
+    ]))
+    c, rules = a.resolve_option(selector)
+    assert c.conId == 200 and c.secType == "OPT" and c.exchange == "SMART"
+    assert rules == ((Decimal(0), Decimal(".01")), (Decimal(3), Decimal(".05")))
+    a.resolve_option(selector)
+    a.reqMarketRule.assert_called_once_with(26)
+
+
+def test_option_resolution_refuses_missing_smart_rule():
+    a = adapter()
+
+    def resolve(req_id, c):
+        c.conId = 200
+        a.contractDetails(req_id, SimpleNamespace(
+            contract=c, validExchanges="CBOE", marketRuleIds="27"
+        ))
+        a.contractDetailsEnd(req_id)
+
+    a.reqContractDetails = Mock(side_effect=resolve)
+    with pytest.raises(BrokerError, match="SMART"):
+        a.resolve_option(Option("AAPL", date(2026, 11, 20), 360, "C", "AAPL", 100))

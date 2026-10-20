@@ -1,4 +1,4 @@
-"""USD long-equity run accounting from actual executions and observed portfolio marks."""
+"""USD long-equity/option accounting from executions and observed portfolio marks."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from .ledger import strategy_ledger
+from .ledger import contract_multiplier, strategy_ledger
 
 
 def valuation(
@@ -23,6 +23,7 @@ def valuation(
     keys = {(o.get("client_id"), o["order_id"]) for o in orders if o.get("tag") == tag}
     fills = [e for e in executions if (e.get("client_id"), e.get("order_id")) in keys]
     lots: dict[int, deque[list[Any]]] = {}
+    multipliers: dict[int, Decimal] = {}
     realized, realized_fees = Decimal(0), Decimal(0)
     realized_known = True
     issues = list(ledger.issues)
@@ -31,6 +32,11 @@ def valuation(
         if q is None or q <= 0 or price is None or price <= 0 or "con_id" not in e:
             continue  # Ledger validation supplies the issue; no fabricated zero costs.
         con_id = int(e["con_id"])
+        multiplier = contract_multiplier(e)
+        if multiplier is None:
+            continue  # Ledger supplies the invalid-multiplier issue.
+        multipliers[con_id] = multiplier
+        price *= multiplier  # FIFO prices are dollars per contract, not quoted premium units.
         fee = money(e.get("commission")) if e.get("fee_currency") == "USD" else None
         queue = lots.setdefault(con_id, deque())
         if e.get("side") in {"BOT", "BUY"}:
@@ -64,8 +70,10 @@ def valuation(
         if price is None or price <= 0 or not stamp:
             marks_known = False
         else:
-            exposure += quantity * price
-            unrealized += sum((q * (price - cost) for q, cost, _ in queue), Decimal(0))
+            exposure += quantity * price * multipliers[con_id]
+            unrealized += sum(
+                (q * (price * multipliers[con_id] - cost) for q, cost, _ in queue), Decimal(0)
+            )
         for q, _, fee in queue:
             if fee is None:
                 entry_fees_known = False

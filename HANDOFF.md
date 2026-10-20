@@ -19,7 +19,209 @@ and account/order performance tracking.
 
 ## Where to resume
 
-Current checkpoint: **2026-10-20, stopped for the day**. The bounded AAPL paper
+### Stop checkpoint — 2026-10-20
+
+Owner chose to stop here and restart fresh later. Basic algorithmic AAPL stock
+paper trading is implemented and live-validated: completed-bar decisions submit
+orders automatically, with funding/risk limits, fill/fee tracking, ownership,
+reconciliation and configured pending-order cleanup. Human launch does not mean
+manual approval of each trade. The short durations and four-order budget are the
+tested profile settings. Disconnect uncertainty currently pauses trading and can
+require explicit recovery; unattended recovery across failures/sessions is unfinished.
+Selected long-option BUY/SELL and cancellation are validated; an algorithmic option
+strategy runner is not implemented. SPY stays blocked at the owner's request.
+
+No matching strategy/option/cancellation/flatten process was active at this stop
+check. Last read-only account preflight passed after the option cancellation:
+flat AAPL, zero working/missing/foreign orders, valid funding/P&L. The cancellation
+result also confirms the whole account flat and its reservation released to zero.
+No broker actions are pending from this session.
+
+For a fresh later session, read this checkpoint and TODO.md, open the intended
+paper TWS session, activate `.venv`, and run:
+
+```sh
+python examples/paper_preflight.py --profile examples/paper_aapl.json --connect
+```
+
+Review fresh state before launching `examples/paper_strategy.py` with the profile
+and `--execute` during the regular session. Omitting `--resume-run` creates a new
+run with fresh validated state. Keep the existing journal and evidence; a fresh run
+does not mean deleting history or resetting an exhausted run's limits. Check for
+holdings/unresolved orders rather than assuming the last flat state still applies.
+The shipped profile remains one share, $500/order, four orders, $25 session-loss
+threshold and 600 seconds; stop can retain filled inventory.
+
+Latest code validation: 795 tests, Ruff, mypy (41 source files), whitespace,
+source archive/wheel and SDK-free smoke/CLI pass. Subsequent edits only record
+acceptance/documentation. Code and docs remain local, uncommitted and unpushed.
+The detailed evidence and remaining broader roadmap follow below.
+
+Cleanup at stop: removed project test/type/lint and Python bytecode caches, the
+identified `/tmp/pyibquant` scratch scripts/build logs and two temporary wheel-test
+environments (34 files/cache directories). Preserved `.venv`, `dist`, reusable
+examples/tests, paper SQLite journals (including sidecars/lock files), run evidence
+and saved research results. Generated evidence under ignored `charts/` is retained
+intentionally for audit/recovery; it is not disposable scratch data.
+
+### Market-session continuation — 2026-10-20
+
+Owner requested live-market tasks 1–7 plus fresh quotes, quote/feed recovery, SPY
+permissions and active-signal controls. Read-only socket access requires sandbox
+escalation; the initial sandbox failures were not evidence of a broken TWS setup.
+
+Passed: paper preflight (flat AAPL, clear reconciliation, funding/P&L available),
+live AAPL equity and 2026-11-20 340 C quotes including Greeks, bar reconnect/backfill,
+and the new live session-controls check. That check observed completed-bar signals
+before and after recovery, explicit pause/resume, automatic pause on its own data
+socket disconnect, no silent resume, stable stock/option identities and cursors,
+visible closed gaps, stop behavior and clear final reconciliation. Broker order
+methods were disabled. Evidence: `charts/paper/live-session-controls-2026-10-20/`.
+
+The completed-order coverage probe returned five AAPL records and its completion
+barrier; evidence: `charts/paper/completed-order-coverage-2026-10-20/`. Filled records
+report totalQuantity=0 but filledQuantity=1. The probe does not merge records into
+strategy state or certify historical completeness. Exact-identity completed-order
+recovery has since been integrated into `PaperBroker.reconcile()`: nine TWS records
+matched in read-only preflight. A separate reconstructed journal omitting the prior
+unfilled order's terminal callbacks recovered Submitted to Cancelled and released
+the reservation, with zero submissions/cancellations. Evidence:
+`charts/paper/completed-recovery-validation-2026-10-20/`. This is a reconstructed
+missing-callback test, not a claim of actual disconnect-during-order validation.
+SPY live API quote retry failed with IBKR 10089 ARCA/TOP/ALL. Owner explicitly chose
+to leave SPY blocked and continue with AAPL.
+
+The owner completed the new 1800-second execution run
+`d547a4da804c4e5891518952953d0e4c` from 12:38:41 to 13:08:41 New York time.
+Thirty completed-bar signals and thirty loss checks, four one-share fills, no
+runner pauses/feed failures. BUY 340.90, SELL 340.76, BUY 340.79, SELL 340.68.
+Gross -0.25 USD, fees 4.014050, net -4.264050; flat, complete, issue-free ledger.
+Baseline remained -4.854019000000006 (broker account daily P&L at launch).
+Fresh read-only preflight confirmed flat holdings, clear orders and usable funding.
+This run has used its four-order budget; do not increase its cap or resume it.
+
+Completed owner check: `417b80ac0fcf47958f2c59a89f79f427`, client 297 order 2,
+one-share BUY limit 333.59. One send attempt then UnknownSend after own socket loss;
+explicit same-ID resume recovered acknowledgment, canceled unfilled and reconciled
+flat with a complete zero-execution ledger and no pending reservation. No replacement
+was submitted. Evidence: `charts/paper/cancel-checks/417b80ac0fcf47958f2c59a89f79f427/`.
+
+Completed owner-run strategy with the shipped profile and
+`--seconds 600 --check-controls --execute`. The offline-tested control harness waits
+for a signal and resolved orders, pauses across a candle for at least 65 seconds,
+checks unchanged cursor/signals/baseline/configuration/order budget, resumes with
+normal reconciliation/risk checks, then requires a subsequent live signal. Expected
+progress: `Execution control check: paused`, `resumed`, `passed`, then normal bounded
+completion. Existing one-share/four-order/$500/$25 caps and stop policy apply;
+filled holdings may remain. New module: `trading/control_check.py`; eight focused
+tests in `tests/test_control_check.py`. Actual execution-enabled control acceptance
+passed in run `77d386816acd417e94d29b1545d9b339`, 13:23:53–13:33:53 New York
+time. Nine signals; pause at 13:24:08, resume at 13:25:13, passed at 13:26:06.
+Baseline -9.118068999999982 and caps were preserved. One BUY fill at 341.25,
+fee 1.000003 USD; one owned AAPL share retained at stop. Ledger complete and
+issue-free, with open-position P&L dependent on last observed marks.
+
+Completed owner exit: `examples/paper_flatten.py --profile examples/paper_aapl.json --run-id
+77d386816acd417e94d29b1545d9b339 --execute`. Default invocation was verified read-only
+against TWS and plans one owned SELL under the persisted $500 cap. Execution
+reconciles afresh, submits at most one limit SELL, waits for terminal evidence and
+reports actual strategy/account flatness. It applies the profile's pending-order
+cleanup and never buys, adopts external holdings, resumes signals or blindly replaces
+an order. Run artifacts remain under the same run directory. Restored flatten now
+checks the original checkpoint before writing its own pause checkpoint; a regression
+test covers the former self-conflict. Owner execution filled SELL order 13 at 340.03;
+two total fills, gross -1.22 USD, fees 2.007011, net -3.227011. Strategy and account
+flat, complete/issue-free ledger and no pending reservation. Fresh read-only preflight
+is clear (`charts/paper/post-owned-flatten-preflight.json`). Earlier exhausted runs
+remain reporting-only.
+
+Owner-run option round trip passed: `e7c2452026e5459d845a3214ff0bfc8a`, client 311,
+2026-10-20 14:03:55–14:03:57 New York. BUY one at 2.32, SELL one at 2.17;
+gross -15 USD, fees 1.535070, net -16.535070. Complete issue-free ledger,
+strategy/account flat, no pending owned order. Saved evidence:
+`charts/paper/option-checks/e7c2452026e5459d845a3214ff0bfc8a/`.
+Fresh read-only `charts/paper/post-option-roundtrip-preflight.json` is clear.
+
+Owner-run option cancellation passed: `c7a050a5fbad4f7f807738fc3ef9383e`, client 311
+order 3, 2026-10-20 14:19:44 New York plan. BUY one at 1.95 was acknowledged and
+canceled unfilled. The 197 USD reservation (195 premium plus 2 fee allowance)
+released to zero; ledger complete with zero executions/fees, account flat,
+reconciliation clear and no pending owned order. Saved evidence:
+`charts/paper/option-checks/c7a050a5fbad4f7f807738fc3ef9383e/`.
+Fresh read-only `charts/paper/post-option-cancellation-preflight.json` passes:
+zero working/missing/foreign orders, flat AAPL, valid funding and account P&L.
+
+The bounded AAPL live-session checks are complete; no further owner command is
+pending. Keep SPY blocked as requested. Broader settlement calendars/next-day cash
+release, natural partial fills/corrections, full historical recovery, automatic
+broker reconnect during execution, multi-session baselines, cash-flow-adjusted
+returns and automated option strategies remain unverified or unimplemented.
+Do not repeat completed orders or reset exhausted runs to generate more fills.
+For future option cancellation uncertainty, ordinary `--resume-check ID --execute`
+never submits a replacement BUY. A retained fill requires review before explicit
+`--resume-check ID --execute --exit-owned`.
+
+Read-only cancellation preflight passed at 14:09:22 New York: resting BUY limit
+1.95, premium 195 USD, quoted spread/fee screen 24 USD; no orders transmitted.
+Evidence: `charts/paper/option-checks/c8b971cea7f347e3b5e070e17ffc64a2/`.
+Execution refreshes this plan. Current validation: **795 tests**, Ruff, mypy
+(41 source files), whitespace check, source archive/wheel and isolated SDK-free
+smoke/CLI all pass. Cancellation regressions cover multiplier reservation release,
+missing-order recovery without replacement and a fill race retaining inventory.
+
+Initial option API and multiplier-aware accounting are offline tested; read-only
+TWS contract/rule/quote/funding preflight passes. Exact contract 845042384,
+multiplier 100, SMART market rule
+26 reports .01 increments. Harness limits use a coarser .05 grid for the paper
+simulator's documented penny-fill limitation, still checked against the actual rule.
+At 13:59 New York, plan BUY 2.30 / exit reference 2.15, entry premium 230 USD,
+quoted spread plus estimated fees 19 USD. The 360 C candidate failed the spread
+budget; no order was sent. Limits re-evaluate at execution and must still fit caps.
+
+The option harness permits one BUY and one SELL attempt, each one contract under
+the existing $500 premium cap. Its $25 check is a pre-entry spread/fee estimate,
+not a guaranteed realized-loss stop. It records the validated account baseline.
+Expiry-day/expired, stale/mismatched quote, missing tick rules/multiplier, external
+inventory and uncertain state block orders. Unknown outcomes require the exact
+printed `--resume-check CHECK_ID --execute`, which never buys or repeats a sell
+attempt. A failed exit may retain an owned contract and requires explicit review.
+Earlier read-only evidence:
+`charts/paper/option-checks/38366e61883144d48fdbf4b6fba5a7ac/`.
+Keep other execution workflows stopped. Full option strategy automation, lifecycle
+events, settlement calendars and corrections remain separate backlog.
+
+Post-recovery preflight exposed and fixed a replay bug: legacy `send_unknown`
+events omitted client ID and replayed under the observer's current client, creating
+a false foreign order (288:2) alongside the canceled real order (297:2). New events
+persist client ID; legacy replay uses original session metadata in both broker and
+offline replay. Source records are unchanged. Focused cross-client and offline
+regressions pass; fresh preflight reports zero working/missing/foreign orders and
+flat AAPL. Evidence: `charts/paper/post-disconnect-recovery-fixed-preflight.json`.
+
+Historical launch instructions: `examples/paper_cancel_check.py --profile examples/paper_aapl.json
+--execute --disconnect-after-send`. This attempts one one-share AAPL DAY limit BUY
+2% below the fresh bid (capped at $500), intentionally disconnects its own broker
+socket, and leaves any possibly working order for explicit recovery. Expected
+outcome is disconnected_after_send (exit 2); preserve the exact Check ID and then
+run `--resume-check CHECK_ID --execute`. The resume command never submits a new
+order. Missing outcomes block cancellation/replacement; any unexpected fill is
+reported and retained, never auto-sold. Do not repeat the initial submission.
+Focused tests cover send uncertainty, one intent, no automatic cancellation,
+fresh recovered acknowledgment and exact-order cancellation.
+Validation after these changes: 761 offline tests, Ruff, mypy, whitespace check,
+source archive/wheel and isolated SDK-free smoke/CLI passed. The read-only fresh
+cancellation plan also passed; its price must be refreshed by the execution command.
+Broader broker recovery, settlement calendars, corrections, cash-flow-adjusted returns
+and automated option strategies remain.
+The established broker workflow uses human terminal handoff. The earlier handoff
+records an automatic-review rejection, but the original rationale is not available
+in this continuation; do not present it as a newly verified blanket paper-trading
+prohibition. No permission settings have been changed. The earlier close-of-day
+checkpoint below is historical.
+
+### Earlier bounded-equity checkpoint
+
+Recorded checkpoint: **2026-10-20, before this continuation**. The bounded AAPL paper
 workflow is validated. The last owner-run reconciliation was flat, with no pending
 owned order or reservation. Cleanup did not contact IBKR; this is recorded state,
 not a new account observation. All source changes are saved locally and remain

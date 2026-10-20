@@ -18,8 +18,9 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .errors import PyIBQuantError
+from .quotes import Option, Quote
 from .trading.journal import Journal
-from .trading.ledger import StrategyLedger, strategy_ledger
+from .trading.ledger import StrategyLedger, contract_multiplier, strategy_ledger
 
 
 class BrokerError(PyIBQuantError):
@@ -46,6 +47,7 @@ class Reconciliation:
     working_orders: tuple[Mapping[str, Any], ...]
     missing_orders: tuple[Mapping[str, Any], ...]
     foreign_orders: tuple[Mapping[str, Any], ...]
+    completed_orders_checked: bool = False
 
     @property
     def clear(self) -> bool:
@@ -212,6 +214,10 @@ class PaperBroker:
         self._last_callback = monotonic()
         # Replay only identities/logs, never reuse old account values as current funds.
         history = self.journal.events(account)
+        self._session_clients = {
+            e["session"]: e["payload"]["client_id"] for e in history
+            if e["kind"] == "session" and type(e["payload"].get("client_id")) is int
+        }
         for event in history:
             if event["kind"] == "pnl_flat_reference":
                 self._prior_flat_risk = event["payload"]
@@ -223,7 +229,10 @@ class PaperBroker:
                 "fee",
                 "send_unknown",
             }:
-                self._apply(event["kind"], event["payload"], event["received_at"])
+                self._apply(
+                    event["kind"], event["payload"], event["received_at"],
+                    source_session=event["session"],
+                )
         if self._prior_flat_risk is None and any(e["kind"] == "pnl_validated" for e in history):
             from .trading.offline import recover_flat_reference
 
@@ -321,11 +330,16 @@ class PaperBroker:
             finally:
                 self._queue.task_done()
 
-    def _apply(self, kind: str, p: dict[str, Any], stamp: str) -> None:
+    def _apply(
+        self, kind: str, p: dict[str, Any], stamp: str, *, source_session: str | None = None
+    ) -> None:
         if p.get("account", self.account) != self.account:
             return
         self._last_callback = monotonic()
-        if kind == "value":
+        if kind == "session":
+            if type(p.get("client_id")) is int:
+                self._session_clients[source_session or self.session] = p["client_id"]
+        elif kind == "value":
             if (
                 p["tag"] == "NetLiquidation"
                 and p.get("source") == "account_summary"
@@ -386,6 +400,11 @@ class PaperBroker:
                     else None
                 )
         elif kind in {"intent", "order", "order_status", "send_unknown"}:
+            if kind == "send_unknown" and "client_id" not in p:
+                origin = self._session_clients.get(source_session or self.session)
+                if origin is None:
+                    raise BrokerError("Unattributed send outcome: source-session client ID missing")
+                p = {**p, "client_id": origin}
             key = f"{p.get('client_id', self._adapter.client_id)}:{p['order_id']}"
             # Status callbacks lack an account. Only attach them after an account-bound
             # openOrder or this client's persisted intent establishes the identity.
@@ -921,6 +940,7 @@ class PaperBroker:
                 (
                     (money(o.get("limit_price")) or Decimal(0))
                     * (money(o.get("remaining")) or Decimal(0))
+                    * (contract_multiplier(o) or Decimal(0))
                     + Decimal(2)
                     for o in self._orders.values()
                     if self._owned(o)
@@ -930,6 +950,13 @@ class PaperBroker:
                 Decimal(0),
             )
             blocked = [f"Missing or invalid {tag}" for tag, v in amounts.items() if v is None]
+            invalid_reserved = any(
+                self._owned(o) and o.get("side") == "BUY"
+                and o.get("status") not in TERMINAL_ORDER_STATES
+                and contract_multiplier(o) is None for o in self._orders.values()
+            )
+            if invalid_reserved:
+                blocked.append("Pending contract multiplier is unknown")
             if pending:
                 blocked.append("Owned order remains unresolved")
             if self._status != "ready":
@@ -940,7 +967,7 @@ class PaperBroker:
                 policy="no_borrowing",
                 blocked_reasons=blocked,
                 unsettled_estimate=str(unsettled) if unsettled is not None else None,
-                pending_buy_estimate=str(reserved),
+                pending_buy_estimate=None if invalid_reserved else str(reserved),
                 settled_source=settled_source,
                 base_currency=base,
                 **{k: str(v) if v is not None else None for k, v in amounts.items()},
@@ -1056,37 +1083,48 @@ class PaperBroker:
                     held = money(self._positions.get(contract.conId, {}).get("quantity", 0))
                     if held is None or held < quantity:
                         raise BrokerError("Sell exceeds reconciled holdings; shorting is disabled")
-                order_ref = "pyibquant:" + (key or uuid4().hex)
-                if any(o.get("order_ref") == order_ref for o in self._orders.values()):
-                    raise BrokerError("Order idempotency key already exists")
-                oid = self._adapter.allocate_id()
-                self._record(
-                    "intent",
-                    dict(
-                        order_id=oid,
-                        client_id=self._adapter.client_id,
-                        account=self.account,
-                        order_ref=order_ref,
-                        tag=tag,
-                        con_id=contract.conId,
-                        symbol=symbol.upper(),
-                        side=side,
-                        quantity=str(quantity),
-                        limit_price=str(price) if price is not None else None,
-                        order_type="LMT" if price is not None else "MKT",
-                        filled="0",
-                        remaining=str(quantity),
-                        status="PendingSubmit",
-                    ),
-                )
-            try:
-                self._adapter.send_order(
-                    oid, contract, side, quantity, price, self.account, order_ref
-                )
-            except Exception as exc:
-                self._record("send_unknown", dict(order_id=oid, status="UnknownSend"))
-                raise BrokerError("Send outcome unknown; reconcile, never blindly retry") from exc
-            return oid
+            return self._send_intent(contract, symbol.upper(), side, quantity, price, tag, key)
+
+    def _send_intent(
+        self, contract: Any, symbol: str, side: str, quantity: int, price: Decimal | None,
+        tag: str, key: str | None, metadata: dict[str, Any] | None = None,
+    ) -> int:
+        """Shared durable identity/send boundary for validated equity and option orders."""
+        if not isinstance(tag, str) or len(tag) > 100:
+            raise ValueError("tag must be a string of at most 100 characters")
+        if key is not None and (not key or len(key) > 40 or not key.isascii()):
+            raise ValueError("key must contain 1–40 ASCII characters")
+        with self._lock:
+            order_ref = "pyibquant:" + (key or uuid4().hex)
+            if any(o.get("order_ref") == order_ref for o in self._orders.values()):
+                raise BrokerError("Order idempotency key already exists")
+            oid = self._adapter.allocate_id()
+            self._record("intent", dict(
+                order_id=oid, client_id=self._adapter.client_id, account=self.account,
+                order_ref=order_ref, tag=tag, con_id=contract.conId, symbol=symbol,
+                side=side, quantity=str(quantity),
+                limit_price=str(price) if price is not None else None,
+                order_type="LMT" if price is not None else "MKT",
+                filled="0", remaining=str(quantity), status="PendingSubmit", **(metadata or {}),
+            ))
+        try:
+            self._adapter.send_order(oid, contract, side, quantity, price, self.account, order_ref)
+        except Exception as exc:
+            self._record("send_unknown", dict(
+                order_id=oid, client_id=self._adapter.client_id, status="UnknownSend"
+            ))
+            raise BrokerError("Send outcome unknown; reconcile, never blindly retry") from exc
+        return oid
+
+    def submit_option_limit(
+        self, selector: Option, side: str, quantity: int, limit_price: float, *, quote: Quote,
+        tag: str, key: str | None = None,
+    ) -> int:
+        """Bounded USD long-option DAY limit; fresh exact quote and tick rule required."""
+        from .trading.option_order import submit_option_limit
+
+        return submit_option_limit(self, selector, side, quantity, limit_price,
+                                   quote=quote, tag=tag, key=key)
 
     def cancel(self, order_id: int) -> None:
         with self._commands, self._lock:
@@ -1114,6 +1152,18 @@ class PaperBroker:
         """
         with self._commands:
             self.refresh()
+            completed_checked = False
+            if hasattr(self._adapter, "completed_orders"):
+                rows = self._adapter.completed_orders(self.account)
+                with self._lock:
+                    # Validate the entire batch before changing any terminal states.
+                    updates = self._completed_updates(rows)
+                    self._record("completed_order_download", dict(
+                        rows=rows, matched=len(updates), coverage="TWS-returned records only"
+                    ))
+                    for update in updates:
+                        self._record("order", update)
+                completed_checked = True
             with self._lock:
                 snap = self.snapshot()
                 working = tuple(
@@ -1132,7 +1182,7 @@ class PaperBroker:
                     for o in snap.orders
                     if o.get("status") not in TERMINAL_ORDER_STATES and not self._owned(o)
                 )
-                result = Reconciliation(snap, working, missing, foreign)
+                result = Reconciliation(snap, working, missing, foreign, completed_checked)
                 self._record(
                     "reconciliation",
                     dict(
@@ -1140,9 +1190,56 @@ class PaperBroker:
                         missing=len(missing),
                         foreign=len(foreign),
                         clear=result.clear,
+                        completed_orders_checked=completed_checked,
                     ),
                 )
                 return result
+
+    def _completed_updates(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Only exact durable identities may acquire broker-confirmed terminal state."""
+        updates: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if row.get("account") != self.account:
+                continue
+            perm = row.get("perm_id")
+            if not isinstance(perm, int) or isinstance(perm, bool) or perm <= 0:
+                continue
+            candidates = [o for o in self._orders.values() if o.get("perm_id") == perm]
+            if not candidates:
+                continue  # No adoption of an external or historically unbound order.
+            if len(candidates) != 1:
+                raise BrokerError("Ambiguous completed-order permanent identity")
+            old = candidates[0]
+            if any(row.get(k) != old.get(k) for k in (
+                "client_id", "order_id", "con_id", "order_ref", "side"
+            )):
+                raise BrokerError("Completed-order identity conflicts with the journal")
+            status = row.get("status")
+            if status not in {"Filled", "Cancelled", "ApiCancelled"}:
+                continue  # Inactive/unknown status alone is not safe cancellation evidence.
+            quantity, filled = money(old.get("quantity")), money(row.get("filled"))
+            previous = money(old.get("filled"))
+            if (
+                quantity is None or quantity <= 0 or filled is None or filled < 0
+                or filled > quantity or (previous is not None and filled < previous)
+                or (status == "Filled" and filled != quantity)
+                or (old.get("status") == "Filled" and status != "Filled")
+            ):
+                raise BrokerError("Completed-order fill quantity conflicts; reconcile manually")
+            # TWS can report zero totalQuantity for filled records. Keep durable
+            # submitted quantity; execution callbacks alone establish price/fees.
+            update = dict(
+                account=self.account, client_id=old["client_id"], order_id=old["order_id"],
+                perm_id=perm, status=status, filled=str(filled), remaining="0",
+                completed_time=row.get("completed_time"),
+                completed_status=row.get("completed_status"),
+                recovery_source="completed_orders",
+            )
+            key = f"{old['client_id']}:{old['order_id']}"
+            if key in updates and updates[key] != update:
+                raise BrokerError("Conflicting duplicate completed-order records")
+            updates[key] = update
+        return list(updates.values())
 
     def strategy_ledger(self, tag: str) -> StrategyLedger:
         """Audit recorded strategy fills; cash flow is not marked-to-market P&L."""

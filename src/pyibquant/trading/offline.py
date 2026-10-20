@@ -31,13 +31,20 @@ def recover_flat_reference(events: list[dict[str, Any]], account: str) -> dict[s
     adapter = SimpleNamespace(client_id=1, close=lambda: None)
     with TemporaryDirectory(prefix="pyibquant-risk-replay-") as temporary:
         with PaperBroker(adapter, Path(temporary) / "replay.sqlite3", account=account) as replay:
+            replay._session_clients.update({
+                e["session"]: e["payload"]["client_id"] for e in events
+                if e["kind"] == "session" and type(e["payload"].get("client_id")) is int
+            })
             for event in events:
                 if event["sequence"] > last["sequence"]:
                     break
                 if event["session"] == session or event["kind"] in {
                     "intent", "order", "order_status", "execution", "fee", "send_unknown"
                 }:
-                    replay._apply(event["kind"], event["payload"], event["received_at"])
+                    replay._apply(
+                        event["kind"], event["payload"], event["received_at"],
+                        source_session=event["session"],
+                    )
             reference = replay._pnl_reference
             if reference is None:
                 return None
@@ -74,7 +81,10 @@ def load_account(
         with PaperBroker(adapter, Path(temporary) / "replay.sqlite3", account=selected) as broker:
             with broker._lock:
                 for event in events:
-                    broker._apply(event["kind"], event["payload"], event["received_at"])
+                    broker._apply(
+                        event["kind"], event["payload"], event["received_at"],
+                        source_session=event["session"],
+                    )
                 broker.session = events[-1]["session"]
                 broker._sequence = events[-1]["sequence"]
                 broker._status = "offline"

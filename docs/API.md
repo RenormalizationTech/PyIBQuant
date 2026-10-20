@@ -267,9 +267,23 @@ same-day process restart/resume with preserved limits, and acknowledged unfilled
 cancellation on 2026-10-20. Recovery across market sessions still needs validation.
 Open-order visibility is a snapshot, not full control or continuous observation of
 other clients' orders. Historical executions are limited by what TWS returns.
-Full completed-order recovery, execution-correction attribution, automatic reconnect
+Reconciliation also downloads completed orders with an explicit completion barrier.
+It updates only existing journal orders with matching positive permanent ID,
+client/order ID, contract, reference and side. It preserves submitted quantity
+when TWS reports zero total quantity for a filled record, and requires consistent
+filled quantity. Completed orders do not create executions, prices or fees.
+Conflicts raise, unmatched records do not adopt orders, and absence never proves
+cancellation. An incomplete completed-order request requires a new broker session;
+it cannot be retried on the same untagged callback stream. The result exposes
+`completed_orders_checked`; full historical coverage is not promised.
+Read-only TWS verification matched nine records; a reconstructed missing-callback
+journal recovered a known unfilled cancellation without submitting/canceling orders.
+Execution-correction attribution, automatic reconnect
 and robust multi-session strategy accounting remain subsequent work. Unknown
 persisted orders continue to block, rather than being assumed canceled or filled.
+Unknown-send events persist the originating API client ID. Older events without
+that field replay using their original session's client metadata, including offline
+report replay; changing observer clients never creates a duplicate order identity.
 
 `EquityRunner` runs the existing above-SMA signal on one-minute completed candles,
 witnessed by the next live candle. It requires a provider-confirmed regular session,
@@ -475,6 +489,10 @@ The launch commands are:
 # Human-run bounded paper execution during the regular session.
 .venv/bin/python examples/paper_strategy.py --profile examples/paper_aapl.json --execute
 
+# Human-run execution control check (new run; normal limits and stop policy).
+.venv/bin/python examples/paper_strategy.py --profile examples/paper_aapl.json \
+  --seconds 600 --check-controls --execute
+
 # Inspect a checkpoint, paused and read-only; does not open a market feed.
 .venv/bin/python examples/paper_strategy.py --profile examples/paper_aapl.json --resume-run RUN_ID
 
@@ -496,6 +514,35 @@ custom profiles under ignored `charts/`; the shipped profile contains no identif
 or credentials. Resets, cash transfers and cross-date baseline changes require a
 separate reconciliation/new-session decision.
 
+`--check-controls` requires a new execution run of at least 240 seconds. After its
+first completed-bar signal and resolved orders, it deliberately pauses for at least
+65 seconds and one new candle. Signals, candle cursor, run identity, configuration,
+baseline and order budget must stay unchanged during the pause. Resume uses the
+normal fresh-data, ownership, funding/reconciliation and risk checks; it skips the
+paused candles. The check prints `paused`, `resumed` and `passed` after a new signal,
+then continues the bounded run under its existing limits. Failure or timeout still
+stops the runner and performs configured pending-order cleanup; filled holdings
+can remain. Owner-run live acceptance passed on 2026-10-20: nine signals, deliberate
+pause/resume with unchanged risk baseline/caps, a subsequent signal and ten-minute
+completion. One filled AAPL share remained for a separate explicit exit.
+
+To inspect or close only one exact run's reconciled holdings:
+
+```sh
+.venv/bin/python examples/paper_flatten.py --profile examples/paper_aapl.json --run-id RUN_ID
+.venv/bin/python examples/paper_flatten.py --profile examples/paper_aapl.json \
+  --run-id RUN_ID --execute
+```
+
+The first command is a read-only fresh exit plan; `EquityRunner.flatten_plan()` does
+not modify the runner checkpoint or submit/cancel orders. The second checks the
+restored checkpoint under its run lease, pauses and submits at most one bounded
+limit SELL for actual run-owned holdings. It waits for terminal evidence, reconciles
+both ledger and account holdings and applies the profile's pending-order cleanup.
+It never starts new strategy decisions, adopts manual holdings or replaces an
+uncertain order. Prices refresh at execution; stale quotes or mismatched holdings
+block the exit. Fees/realized P&L remain unknown until actual callbacks supply them.
+
 Local setup is complete for this bounded USD-equity workflow. The owner completed
 a ten-minute session with actual fills, then restarted/resumed it with reconciled
 ownership and unchanged loss/order limits. Its fourth order sold the retained
@@ -503,11 +550,35 @@ share; a fifth order was blocked by the original cap. The separate resting-order
 cancellation check also passed on 2026-10-20: broker acknowledgment, Cancelled with
 zero fills, flat holdings, clear reconciliation and no pending owned reservation.
 These checks validate the initial bounded-equity operating sequence.
+The owner subsequently completed a 30-minute run with 30 completed-bar decisions,
+four fills and a flat, fully attributed result (-0.25 USD gross, 4.014050 USD fees,
+-4.264050 USD net). Fresh read-only reconciliation confirmed flat holdings and
+no unresolved orders. Its four-order budget is exhausted.
 Completed-order history beyond TWS coverage, correction normalization, cross-date
 rebaselining, options/margin strategies and live-money enablement remain outside
 this initial setup. Unknown outcomes continue to block trading.
 
 ### Paper cancellation check and recovery
+
+For a separate human-run disconnect-after-send acceptance check:
+
+```sh
+.venv/bin/python examples/paper_cancel_check.py --profile examples/paper_aapl.json \
+  --execute --disconnect-after-send
+# Preserve the exact printed Check ID; expected outcome: disconnected_after_send, exit 2.
+.venv/bin/python examples/paper_cancel_check.py --profile examples/paper_aapl.json \
+  --resume-check CHECK_ID --execute
+```
+
+The first command attempts one one-share AAPL DAY limit BUY 2% below the fresh bid,
+with the existing $500 cap and funding checks. It disconnects only its own broker
+socket immediately after the send returns, marks the send uncertain and performs
+no automatic cancellation/reconnect. The order may remain working or fill.
+The second command first reconciles the exact persisted order with fresh broker
+downloads, then cancels/waits only that order. It never submits a replacement or
+reverses a fill. A missing original order blocks recovery. Never repeat the first
+command to recover an uncertain outcome. This harness is offline tested; actual
+disconnect-after-send acceptance still requires the owner-run paper check.
 
 Keep the strategy stopped and the account flat. During a provider-confirmed regular
 session, inspect a fresh plan, then have the human operator execute the bounded check:
@@ -554,6 +625,73 @@ Exit 0 means a read-only preflight/inspection completed or an executed cancellat
 passed. Exit 1 reports uncertainty or a failed check; exit 2 reports a confirmed
 outcome that did not meet the unfilled-cancellation criteria, including a fill.
 Inspect the result and holdings before taking any further action.
+
+### Selected long-option paper lifecycle (experimental)
+
+`PaperBroker.submit_option_limit(option, side, 1, limit_price, quote=quote, tag=tag,
+key=key)` uses the shared durable intent, broker transport, order waits, cancellation
+and reconciliation. It resolves exactly one USD option and downloads its SMART
+price-increment ladder via `reqMarketRule`; `minTick` alone is not assumed sufficient.
+Limits must match that ladder and the quote's exact contract identity/multiplier.
+Bid/ask must be live, non-crossed, positive and received within 15 seconds after
+blocking broker downloads. Expiry-day/expired orders are refused.
+
+Initial scope is one long contract. Entry requires a flat selected contract, clear
+orders and broker settled-cash funding for `limit × quantity × actual multiplier`
+plus a $2 fee reserve. The order's premium must fit the configured notional cap.
+A SELL can only close the exact tag's one reconciled owned contract; external
+holdings, shorting, scaling, multi-leg orders, exercise/assignment and automatic
+option strategies are unsupported. `EquityRunner` remains equity-only.
+Ledger cash flow, FIFO P&L, exposure and pending-buy estimates now apply actual
+option multipliers. Missing/conflicting execution multipliers make results incomplete;
+equity calculations retain per-share behavior. Fees remain broker-reported values.
+
+The separate bounded human-run integration harness defaults to read-only:
+
+```sh
+.venv/bin/python examples/paper_option_check.py --profile examples/paper_aapl.json \
+  --expiry 2026-11-20 --strike 365 --right C
+.venv/bin/python examples/paper_option_check.py --profile examples/paper_aapl.json \
+  --expiry 2026-11-20 --strike 365 --right C --execute
+# Recovery uses the exact printed Check ID and persisted contract; never repeat entry.
+.venv/bin/python examples/paper_option_check.py --profile examples/paper_aapl.json \
+  --resume-check CHECK_ID --execute
+```
+
+It requires a flat starting account, clear orders, a provider-confirmed underlying
+regular session and fresh option quotes. It uses five-cent-grid limits rounded
+against the actual market rule to accommodate the documented paper-option penny-fill
+limitation; see [IBKR paper simulator limitations](https://www.interactivebrokers.com/campus/glossary-terms/paper-trading-account/).
+Preflight requires entry premium below $500 and quoted spread plus $4 estimated
+round-trip fees within the profile loss budget. This cost estimate does not guarantee
+a realized-loss limit or execution quality. Execution records a validated account
+P&L baseline, attempts one BUY then one owned SELL, waits for broker terminal states
+and reconciles positions/fees. No filled round trip is claimed by read-only preflight.
+
+Recovery never buys, never blindly replaces an attempted sell and refuses missing
+or foreign orders. Pending tagged orders are canceled and verified on exit; filled
+holdings are retained if a close fails. Reports/audits live under the exact Check ID
+in ignored `charts/paper/option-checks/`. Keep other execution workflows stopped.
+Owner-run acceptance passed on 2026-10-20, check
+`e7c2452026e5459d845a3214ff0bfc8a`: BUY one AAPL November 20 365 C at 2.32,
+SELL at 2.17; gross -15 USD, fees 1.535070, net -16.535070. Ledger complete,
+account/strategy flat and no pending reservation; fresh read-only preflight clear.
+
+For a separate acknowledgment/cancellation check, add `--cancel-only` to a new
+check. It submits one BUY at a nickel-rounded limit 10% below the fresh bid,
+waits for acknowledgment, rests two seconds, cancels that exact order, and reports
+the multiplier-based reservation before/after. Success requires zero fills, confirmed
+cancellation, clear reconciliation and a flat account. A fill race is reported and
+retained without an automatic SELL. Resume cancellation with the exact Check ID;
+only explicit `--resume-check CHECK_ID --execute --exit-owned` requests an owned
+exit after review. Recovery never submits a new BUY. Read-only mode supports
+`--cancel-only` without `--execute`. Quotes and eligibility are rechecked at execution.
+
+Owner-run cancellation acceptance passed on 2026-10-20, check
+`c7a050a5fbad4f7f807738fc3ef9383e`: one 1.95 BUY acknowledged then Cancelled,
+zero fills/fees, complete ledger, account flat and clear reconciliation. The
+197 USD pending-buy estimate (195 premium plus 2 fee allowance) released to zero.
+Fresh read-only account preflight confirmed zero working/missing/foreign orders.
 
 ### Stopping for the day and local data
 

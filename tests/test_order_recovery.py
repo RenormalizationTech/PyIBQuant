@@ -3,12 +3,115 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from unittest.mock import Mock
 
 import pytest
 from test_broker import Adapter, drain, status
 from test_broker import broker as broker
 
 from pyibquant import BrokerError, OrderWaitError, PaperBroker
+
+
+def completed_row(broker, **changes):
+    broker.submit_limit("AAPL", "BUY", 1, 100, tag="strategy")
+    broker._record("order", dict(
+        account=broker.account, order_id=10, client_id=272, perm_id=50,
+        con_id=100, order_ref=broker.snapshot().orders[0]["order_ref"], side="BUY",
+        status="Submitted",
+    ))
+    row = dict(
+        account=broker.account, order_id=10, client_id=272, perm_id=50,
+        con_id=100, order_ref=broker.snapshot().orders[0]["order_ref"], side="BUY",
+        quantity="0", filled="0", status="Cancelled",
+    )
+    row.update(changes)
+    broker._adapter.completed_orders = Mock(return_value=[row])
+    return row
+
+
+def test_completed_cancel_releases_reservation_only_for_exact_durable_identity(broker):
+    completed_row(broker)
+    report = broker.reconcile()
+    assert report.clear and report.completed_orders_checked
+    order = report.snapshot.orders[0]
+    assert order["status"] == "Cancelled" and order["quantity"] == "1"
+    assert order["recovery_source"] == "completed_orders"
+    assert not broker.funding()["pending_owned_order"]
+    assert broker._adapter.send_order.call_count == 1
+    broker._adapter.cancel_order.assert_not_called()
+    path = broker.journal.path
+    broker.close()
+    with PaperBroker(Adapter(), path, account="DUABC123") as replacement:
+        assert replacement.snapshot().orders[0]["status"] == "Cancelled"
+
+
+def test_completed_fill_preserves_quantity_and_does_not_invent_executions_or_fees(broker):
+    completed_row(broker, status="Filled", filled="1")
+    report = broker.reconcile()
+    assert report.clear and report.snapshot.orders[0]["quantity"] == "1"
+    assert report.snapshot.executions == ()
+    assert not broker.strategy_ledger("strategy").complete
+
+
+@pytest.mark.parametrize("changes", [
+    {"order_ref": "pyibquant:other"}, {"order_id": 11}, {"client_id": 400},
+    {"con_id": 101}, {"side": "SELL"}, {"status": "Filled", "filled": "0"},
+    {"filled": "2"}, {"filled": None},
+])
+def test_completed_conflicts_do_not_release_reservation(broker, changes):
+    completed_row(broker, **changes)
+    with pytest.raises(BrokerError, match="conflict"):
+        broker.reconcile()
+    assert broker.funding()["pending_owned_order"]
+    assert broker.snapshot().orders[0]["status"] == "Submitted"
+
+
+@pytest.mark.parametrize("changes", [
+    {"perm_id": 51}, {"perm_id": 0}, {"account": "DUOTHER"}, {"status": "Inactive"},
+])
+def test_unmatched_completed_record_never_resolves_or_adopts_an_order(broker, changes):
+    completed_row(broker, **changes)
+    report = broker.reconcile()
+    assert not report.clear and len(report.missing_orders) == 1
+    assert len(report.snapshot.orders) == 1
+
+
+def test_completed_download_failure_preserves_unresolved_order(broker):
+    completed_row(broker)
+    broker._adapter.completed_orders.side_effect = BrokerError("incomplete")
+    with pytest.raises(BrokerError, match="incomplete"):
+        broker.reconcile()
+    assert broker.funding()["pending_owned_order"]
+    broker._adapter.cancel_order.assert_not_called()
+
+
+def test_legacy_unknown_send_replays_under_source_client_without_creating_a_ghost(broker):
+    from pyibquant.trading.offline import load_account
+
+    broker.submit_limit("AAPL", "BUY", 1, 100, tag="strategy")
+    # Historical event intentionally omits client ID, as the original code did.
+    broker._record("send_unknown", dict(order_id=10, status="UnknownSend"))
+    status(broker, "Cancelled")
+    path = broker.journal.path
+    broker.close()
+    adapter = Adapter()
+    adapter.client_id = 288
+    with PaperBroker(adapter, path, account="DUABC123") as replacement:
+        orders = replacement.snapshot().orders
+        assert len(orders) == 1 and orders[0]["client_id"] == 272
+        assert orders[0]["status"] == "Cancelled"
+        assert replacement.reconcile().clear
+    _, offline = load_account(path)
+    assert len(offline.orders) == 1 and offline.orders[0]["client_id"] == 272
+    assert offline.orders[0]["status"] == "Cancelled"
+
+
+def test_new_unknown_send_persists_origin_client(broker):
+    broker._adapter.send_order.side_effect = OSError("uncertain")
+    with pytest.raises(BrokerError, match="unknown"):
+        broker.submit_limit("AAPL", "BUY", 1, 100)
+    event = next(e for e in broker.journal.events() if e["kind"] == "send_unknown")
+    assert event["payload"]["client_id"] == 272
 
 
 def execution(b, *, quantity="1", price="99", exec_id="execution-1"):
