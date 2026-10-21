@@ -1,5 +1,6 @@
-include LICENSE README.md CHANGELOG.md HANDOFF.md PROJECT_PLAN.md TODO.md
-recursive-include docs *.md
+include LICENSE README.md CHANGELOG.md CONTRIBUTING.md HANDOFF.md PROJECT_PLAN.md TODO.md mkdocs.yml
+recursive-include docs *.md *.css
 recursive-include examples *.py
 include examples/paper_aapl.json
 recursive-include tests *.py
+recursive-include contributing *.md

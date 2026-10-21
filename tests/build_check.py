@@ -32,9 +32,9 @@ def main() -> None:
         source = work / 'source'
         source.mkdir()
         for name in ('pyproject.toml', 'MANIFEST.in', 'LICENSE', 'README.md', 'CHANGELOG.md',
-                     'HANDOFF.md', 'PROJECT_PLAN.md', 'TODO.md'):
+                     'CONTRIBUTING.md', 'HANDOFF.md', 'PROJECT_PLAN.md', 'TODO.md', 'mkdocs.yml'):
             shutil.copy2(root / name, source / name)
-        for directory in ('src', 'examples', 'tests', 'docs'):
+        for directory in ('src', 'examples', 'tests', 'docs', 'contributing'):
             shutil.copytree(root / directory, source / directory,
                             ignore=shutil.ignore_patterns('__pycache__', '*.egg-info'))
         stage = work / 'artifacts'
@@ -49,9 +49,12 @@ def main() -> None:
             for required in ('examples/research_studies.py', 'docs/API.md', 'CHANGELOG.md',
                              'tests/wheel_smoke.py', 'tests/live_workflow_check.py',
                              'examples/paper_aapl.json', 'examples/paper_preflight.py',
-                             'examples/paper_cancel_check.py', 'examples/paper_option_strategy.py'):
+                             'examples/paper_cancel_check.py', 'examples/paper_option_strategy.py',
+                             'mkdocs.yml', 'docs/stylesheets/extra.css', 'docs/STRATEGY_LAB.md',
+                             'CONTRIBUTING.md', 'contributing/DOCUMENTATION.md'):
                 assert any(name.endswith('/' + required) for name in names), required
             assert not any('/charts/' in name or '/.venv/' in name or '/.git/' in name
+                           or '/private/' in name or name.endswith(('.sqlite3', '.sqlite', '.pem'))
                            for name in names)
             # This is the archive just built from the curated source copy above.
             if hasattr(tarfile, 'data_filter'):

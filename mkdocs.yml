@@ -1,0 +1,59 @@
+site_name: PyIBQuant
+site_description: Python market data, research, simulation and experimental paper trading
+site_url: https://renormalizationtech.github.io/PyIBQuant/
+repo_url: https://github.com/RenormalizationTech/PyIBQuant
+repo_name: PyIBQuant on GitHub
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+strict: true
+
+theme:
+  name: material
+  font: false
+  palette:
+    primary: white
+    accent: indigo
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: README.md
+  - Quick start: QUICKSTART.md
+  - Yahoo Finance (no TWS): YAHOO.md
+  - API reference:
+      - Market data and datasets: API.md
+      - Research and simulation: RESEARCH.md
+      - Paper accounts and runners: PAPER_TRADING.md
+  - Strategy lab: STRATEGY_LAB.md
+  - Manual testing: MANUAL_TESTING.md
+  - Paper operating guide: WORKFLOWS.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    unrecognized_links: warn
+    absolute_links: warn
+    anchors: warn

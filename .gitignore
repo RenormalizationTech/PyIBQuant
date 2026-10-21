@@ -221,3 +221,20 @@ __marimo__/
 
 # Generated charts contain market data; keep them out of Git.
 charts/
+
+# Local/private account data and credentials must not enter public source.
+private/
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+*.pem
+*.key
+*.p12
+.DS_Store

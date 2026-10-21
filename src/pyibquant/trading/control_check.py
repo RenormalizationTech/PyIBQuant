@@ -13,7 +13,7 @@ from .runner import EquityRunner
 class RunnerControlCheck:
     """Pause after a live signal, skip a candle, resume with unchanged risk limits.
 
-    Does not submit, cancel or flatten. The owner explicitly launches an execution
+    Does not submit, cancel or flatten. The operator explicitly launches an execution
     runner; ordinary strategy decisions and stop cleanup retain their normal caps.
     """
 
