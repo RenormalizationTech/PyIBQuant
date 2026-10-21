@@ -363,7 +363,7 @@ def moving_clock(monkeypatch, *times):
 
         @staticmethod
         def now(tz=None):
-            return next(ticks)
+            return next(ticks, times[-1])
 
     monkeypatch.setattr('pyibquant.trading.runner.datetime', Clock)
 

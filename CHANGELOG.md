@@ -4,12 +4,31 @@
 
 Local development snapshot; no published release is implied.
 
+- Validate bounded equity session rollover, automatic selected-option buy/sell,
+  and one-send disconnect/exact-ID cancellation with durable reservation retention.
+  All checks finish flat with clear reconciliation. Refresh quiet option data
+  subscriptions at decision time without weakening quote freshness; support
+  selected-option dispatch in the owned-flatten example. Actual next-date release
+  and natural partial fills remain pending live observations.
+
+- Add durable local USD funding ceilings, dated settlement obligations and a
+  versioned conservative STK/OPT T+1 closure calendar. Preserve partial-fill and
+  unknown-send commitments, debit actual fills/fees, replay after restart and cap
+  releases by fresh broker funds. Serialize local sends and reject stale writers.
+- Add explicit later-session resume with validated daily P&L rebaselining while
+  preserving run identity, ownership, candle cursor, original caps and order budget.
+- Add selected long-option above/below-SMA automation with exact contract quotes,
+  multiplier/tick checks, shared controls, restore and owned flatten; provide an
+  observation-by-default CLI. Initial validation was offline-only; subsequent bounded
+  TWS paper acceptance passed as recorded above.
+
 - Record October 20 owner-run validation of bounded AAPL strategy execution,
   same-day restart, execution controls, owned flattening, disconnect-after-send
   exact-ID recovery, and selected-option buy/sell and unfilled cancellation.
   Exact-identity completed-order recovery is integrated. Settlement calendars,
   execution corrections, automatic broker reconnect, multi-session recovery and
-  automated option strategies remain open.
+  automated option strategies were open at that checkpoint; session rollover and
+  selected-option automation subsequently passed the October 21 checks above.
 
 - Reconcile the end-of-day paper validation checkpoint and private-data index.
   Replace the superseded combined integration order check with read-only account

@@ -1,6 +1,6 @@
 # PyIBQuant development roadmap
 
-Last reconciled: 2026-10-20. Checkboxes describe implemented behavior, not a release promise.
+Last reconciled: 2026-10-21. Checkboxes describe implemented behavior, not a release promise.
 The full project direction remains in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 For machine setup and where to resume, see [HANDOFF.md](HANDOFF.md).
 
@@ -11,9 +11,10 @@ results. Existing fixed-size equity/option APIs retain their behavior. Named
 scientific datasets, quality reports and small daily/intraday study starters are
 also implemented. The local 0.1.0.dev1 snapshot packages these foundations with
 an API guide, source-distribution examples and reusable validation scripts.
-Release preparation is complete at checkpoint `f0f79a6`. Current work: complete settlement accounting and broader recovery around the
-validated bounded paper-trading foundation. Worked scientific
-studies follow the paper-trading milestone. Strategy comparisons and performance
+Release preparation is complete at checkpoint `f0f79a6`. Bounded TWS paper
+acceptance now passes for the new funding ledger, session rollover and option
+runner; next-date release and natural partial fills still need live observation.
+Worked scientific studies follow the paper-trading milestone. Strategy comparisons and performance
 reports remain part of the backtesting backlog.
 
 Historical acquisition supports all four TRADES/MIDPOINT/BID/ASK sources and was
@@ -22,6 +23,80 @@ the development checkpoint: 497 tests, typing/style checks, a clean SDK-free bui
 the TWS end-to-end workflow and three offline Chrome regressions passed.
 Live recording, bulk collection and external providers are not required. The
 obsolete recording/rotation/replay stack and recorded-quote simulator were removed.
+
+### Paper execution acceptance — 2026-10-21
+
+The owner explicitly requested agent-run bounded paper testing in this chat.
+Validation after the quote-refresh fix: 850 tests, Ruff, mypy (43 source files),
+source archive/wheel and isolated SDK-free smoke/CLI all pass.
+The new execution paths now have TWS paper evidence:
+
+- Cross-session equity recovery: restored `77d386816acd417e94d29b1545d9b339`
+  from October 20 with two orders consumed, explicitly rolled its daily baseline,
+  and automatically filled one BUY and one SELL on October 21. The original
+  four-order lifetime cap is consumed, ownership reconciles flat and fees are
+  complete. Today's two fills net -2.207100 USD; the whole run nets -5.434111 USD.
+- Selected-option automation: `5ea6f20b6bb647918879d36711dbbfbc`, one AAPL
+  2026-11-20 365 C, multiplier 100, two-order cap and six-minute bound. The
+  above-SMA runner automatically filled BUY 3.25 and SELL 3.05. Gross -20 USD,
+  fees 1.536883, net -21.536883; complete ledger and flat. These are paper results.
+- Quiet unchanged option BBOs exposed a caller usability issue. The option example
+  now makes one bounded data-subscription refresh at a new decision candle when
+  otherwise valid live BBO receipts are stale. It obtains new broker callbacks;
+  it never re-dates cached fields or relaxes the 15-second guard. Delayed, crossed,
+  missing and disconnected inputs are not retried by this helper. The bounded run
+  recorded six live completed-bar signals and six quote refreshes.
+- Unknown-send reservation: check `c3eda727ed824cc28fc9e14b8e568b05`, client 297
+  order 3, one send attempt. Deliberate own-socket disconnect produced UnknownSend.
+  The local 339.02 USD reservation survived restart and the cancellation request.
+  Exact-ID recovery canceled that same order unfilled, with no replacement;
+  the reservation released to zero and reconciliation is clear.
+- Both actual run checkpoints were restored from a consistent journal backup:
+  paused, correct option/equity identity, consumed caps preserved, no old balances
+  reused as current funds. A fresh read-only TWS preflight passed every check.
+  Final account flat, zero pending reservation and no unresolved/foreign orders.
+
+Evidence: ignored `charts/paper/acceptance-2026-10-21/summary.json` and its component
+reports; original check artifacts remain under `charts/paper/cancel-checks/` and
+run audits under `charts/paper/runs/`. Keep the journal and all recovery identities.
+The two exhausted runs are reporting-only for normal strategy execution; do not
+increase/reset their budgets to obtain more fills. Explicit owned exits remain
+separate from strategy entry/resume.
+
+Both recorded sales are held locally until October 22 under the saved conservative
+policy, capped by fresh broker balances. Actual next-date release cannot be observed
+on October 21. It and natural partial fills remain pending live observations;
+deterministic tests cover both. Automatic broker reconnect, execution corrections
+and full historical coverage remain separate backlog. No real-money account was used.
+
+## Earlier implementation checkpoint — 2026-10-21
+
+Historical checkpoint, superseded by the paper acceptance above.
+
+Implemented and offline-tested: durable USD funding baseline and versioned local
+settlement policy; immediate buy/fee debits, partial-fill commitments and retained
+cancellation/unknown-send reservations; dated sale release capped by fresh broker
+funds; replay and local transmission locking. Explicit session rollover preserves
+run ownership/configuration/order budgets while recording a fresh daily P&L
+baseline. The selected long-option above/below-SMA runner shares those controls,
+including checkpoint restore and owned flatten. Observation remains the default.
+
+Validation: 844 tests, Ruff, mypy (43 source files), source archive/wheel, isolated
+SDK-free smoke/CLI and the synthetic offline Chrome account-report check pass.
+
+These are code/offline-test results, not additional TWS execution acceptance.
+Read-only TWS preflight passed against the existing journal on October 21:
+account, order reconciliation, funding, flat starting holdings and P&L checks all
+passed with transmission disabled. Evidence: ignored
+`charts/paper/funding-preflight-2026-10-21.json`. A read-only selected-option
+runner check resolved the contract and started, then paused on a live-quote
+validity/freshness check before a completed signal; zero order intents. Summary:
+`charts/paper/option-observation-2026-10-21.json`. This is a verified refusal, not
+successful automated execution. At that checkpoint, bounded execution acceptance was pending; it subsequently
+passed as recorded above. No order was sent during the initial offline validation. Automatic broker reconnect, full historical coverage,
+execution-correction normalization and verified external cash flows remain open.
+The local cash ceiling does not automatically credit external deposits/interest;
+the default conservative closure calendar covers 2026–2027. See docs/API.md.
 
 ## Current milestone — algorithmic paper trading and account performance
 
@@ -47,9 +122,12 @@ top of HANDOFF.md. Unattended recovery across failures/sessions remains future w
 - [x] P1: distinct broker funding fields and explicitly estimated unsettled cash
 - [x] P1: durable account history and focused cash/value/P&L charts with freshness/gaps
 - [x] P2: initial limit submit/cancel, fill/fee callbacks and durable identities (offline tested)
-- [ ] P2: settlement-aware spending checks, fees and reconciled order reservations
+- [x] P2: durable local settlement funding, fees and order reservations (offline-tested)
+- [x] TWS bounded fills/fees, reservation recovery, session rollover and option runner
+- [ ] Observe actual next-date cash release (October 22) and natural partial fills
 - [x] P2: explicit startup/same-day recovery with reconciliation and no blind resends
-- [ ] P2: automatic broker reconnect and recovery across trading sessions
+- [x] P2: explicit later-session resume with fresh daily baseline and preserved order budget
+- [ ] P2: automatic broker reconnect
 - [x] P2: recorded order/fill history and bounded paper round-trip/cancellation checks
 - [x] P3: dedicated market feed and completed-bar above-SMA runner (observation verified)
 - [x] P3: initial lifecycle controls, limits and pause-on-disconnect (offline tested)
@@ -65,7 +143,8 @@ top of HANDOFF.md. Unattended recovery across failures/sessions remains future w
 - [x] Separate one-share cancellation harness with exact-ID recovery and fill/timeout handling
 - [x] Owner-run acknowledged unfilled cancellation and released reservation (2026-10-20)
 - [x] Exact-identity completed-order recovery for existing journal orders
-- [ ] Full historical recovery coverage, execution corrections and multi-session baseline policy
+- [ ] Full historical recovery coverage and execution corrections
+- [x] Explicit daily baseline rollover policy with unchanged lifetime order budget (offline-tested)
 - [x] P3: validate bounded equity strategy orders and explicit same-day process recovery
   - Owner-run AAPL algorithmic buy/sell round trip reconciles to -2.147077 USD net.
     October 20 bounded run completed with three fills and one AAPL share retained.
@@ -76,7 +155,9 @@ top of HANDOFF.md. Unattended recovery across failures/sessions remains future w
     owned-order reservation. Broader automatic reconnect remains a separate item.
 - [ ] P4: account/strategy attribution, returns and drawdown with cash-flow evidence
 - [x] P4: initial selected long-option execution after the shared equity lifecycle passes
-  (one-contract bounded harness; automated option strategies remain separate)
+  (one-contract bounded harness, TWS-validated)
+- [x] Selected long-option above/below-SMA runner, exact-contract restore and owned flatten
+  (offline-tested and bounded TWS buy/sell validated; next-date release/partial fills remain)
 
 Market-session continuation, 2026-10-20:
 

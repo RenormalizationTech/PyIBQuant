@@ -37,6 +37,9 @@ Refresh</button><p id="mode" class="muted"></p></div></header><div id="cards" cl
 <p class="muted">Account totals include existing and manual positions. Changes in account value
 are not strategy profit. Broker daily P&amp;L resets; history begins at observation.
 Gaps and session boundaries break lines. Times below use your browser timezone.</p>
+<section><h2>Funding and settlement</h2>
+<p id="funding-status" class="warning"></p><p id="funding-policy" class="muted"></p>
+<div id="settlements" class="scroll"></div></section>
 <section><h2>Net liquidation value</h2><canvas id="value"></canvas></section>
 <section><h2>Cash balance</h2><canvas id="cash"></canvas></section>
 <section><h2>Broker P&amp;L · daily / unrealized / realized</h2>
@@ -139,6 +142,14 @@ const cards=document.getElementById('cards');cards.replaceChildren();
 const title=document.createElement('small');title.textContent=label;
 const b=document.createElement('b');
 b.textContent=fmt(v);div.append(title,b);cards.append(div)});
+const f=d.funding;
+document.getElementById('funding-status').textContent=(f.blocked_reasons??[]).join(' · ');
+document.getElementById('funding-policy').textContent=f.cash_ceiling===undefined?
+'No local settlement baseline recorded':
+`Local cash ceiling ${fmt(f.cash_ceiling)} · fee reserve ${fmt(f.fee_reserve)} · `+
+`unsettled sales ${fmt(f.local_unsettled)} · policy ${f.settlement_policy?.version??'unknown'}`;
+table('settlements',f.settlement_obligations??[],
+['exec_id','currency','gross','trade_date','settlement_date','released']);
 chart('value',d.points,['value']);chart('cash',d.points,['cash']);
 chart('pnl',d.points,['daily','unrealized','realized']);
 drawRuns(d);

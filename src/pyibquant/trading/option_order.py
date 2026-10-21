@@ -96,7 +96,7 @@ def submit_option_limit(
             if held != 0:
                 raise BrokerError("Initial option entry requires a flat selected contract")
             budget = money(broker.funding()["usable"])
-            if budget is None or budget < premium + Decimal(2) * quantity:
+            if budget is None or budget < premium + broker.settlement_policy.fee_allowance:
                 raise BrokerError("Insufficient settled-cash option funding including fee reserve")
         else:
             ledger = broker.strategy_ledger(tag)

@@ -22,6 +22,7 @@ This describes implemented APIs in the `0.1.0.dev1` development snapshot.
 | Stock/option snapshots or streams | `market.quote(...)`, `market.stream_quote(...)` | Yes |
 | Paper account observation | `PaperBroker.ibkr()` (read-only by default) | Yes |
 | Experimental paper execution | `broker.submit_limit(...)`, `.cancel(...)` | Yes |
+| Selected long-option paper runner | `OptionRunner` in `pyibquant.trading.option_runner` | Yes |
 | Completed-bar paper runner | `EquityRunner`, `RunnerConfig` in `pyibquant.trading.runner` | Yes |
 | Optional chart | `series.plot(...)` offline; `market.serve(...)` for connected inspection | Depends |
 
@@ -211,27 +212,65 @@ structure (for example `INDIVIDUAL`), so it must not be treated as proof of cash
 margin financing. The target live-account policy must be configured independently
 of the simulated paper account's capabilities.
 
-`BuyingPower` alone is not an instrument-specific order approval. This initial
-USD-equity implementation uses a deliberately conservative settled-cash/no-borrowing
-policy: cap spending by broker-reported settled cash, USD cash, available funds and
-buying power, plus the configured order limit and a $2 estimated fee reserve.
-Only one owned nonterminal order is allowed at a time. A pending cancellation or
-unknown send result continues to block further submissions, and each submission
-refreshes account state before checking funds. The pending-buy estimate is not
-subtracted again from broker values, avoiding double-counting existing broker holds.
-Other clients may act concurrently; IBKR's actual order acceptance is authoritative.
+`BuyingPower` alone is not an instrument-specific approval. USD spending is capped
+by the minimum of fresh broker settled cash, total USD cash, available funds and
+buying power, and a durable local cash ceiling. The configured order limit is
+separate. Financial fields older than 60 seconds, unresolved orders, conflicting
+executions and missing fees block new exposure. Submissions refresh the account
+and recheck funding under the local journal's transmission lock before persisting
+an intent. Only one PyIBQuant nonterminal order is allowed at a time.
 
-On the tested TWS session, `SettledCash` is absent and the broker supplies
-`SettledCashByDate` instead. The adapter validates semicolon-separated `YYYYMMDD:amount` balance entries and
-selects only the USD entry for the current New York date. Tomorrow's larger balance
-is not today's settled cash; missing, duplicate, malformed or nonfinite entries do
-not become spendable cash. It does not calculate a substitute settlement
-calendar or assume all products settle T+1. Unsettled cash shown in the report is a
-nonnegative total-minus-settled estimate, not a reconstructed settlement ledger.
+The first funded order journals a baseline and a complete copy of its settlement
+policy before sending. Known buy fills debit the local ceiling immediately at
+actual price and contract multiplier. Known positive USD fees debit it immediately;
+unknown fees retain the order's allowance (default $2) and block new exposure until
+confirmed. Partial fills consume actual cash and leave the unfilled limit-price
+commitment reserved. Cancellation requests and unknown sends keep that commitment;
+only terminal broker evidence releases the unfilled portion. Explicit holding-only
+exits remain possible when funding blocks new exposure.
 
-Sources: [IBKR buying power](https://www.interactivebrokers.com/campus/glossary-terms/buying-power/),
-[IBKR balances](https://www.ibkrguides.com/traderworkstation/account-balances.htm),
-[IBKR account configuration](https://www.interactivebrokers.com/en/accounts/configuring-your-account.php).
+Sale proceeds produce dated, USD settlement obligations. The default versioned
+`SettlementPolicy` uses a conservative local T+1 rule for both US stocks and
+selected long options, skipping weekends and a union of market/banking closures
+with bounded 2026–2027 coverage. This is deliberately stricter than IBKR's documented
+US option T+0 cash availability; it is not a claim that every product uses stock
+settlement. Outside calendar coverage, new buys are refused. Supply an explicit
+bounded policy using `settlement_policy=SettlementPolicy(...)` when opening a new
+journal/baseline; the journal retains its exact policy across restarts and rejects
+an incompatible replacement. Import from `pyibquant.trading.funding`.
+
+At the local release date the sale can increase the local ceiling, but fresh broker
+funds must independently permit spending. Local commitments are not subtracted a
+second time from broker balances: usable cash is the minimum of two independently
+computed ceilings. `funding()` exposes `cash_ceiling`, `fee_reserve`,
+`pending_buy_estimate`, `local_unsettled`, `settlement_obligations`, policy version,
+coverage and blocking reasons. The account viewer includes settlement details.
+
+Restart replays the baseline, intents, executions and late fees; it never reuses
+old account balances as current funds. Local POSIX journal locks serialize sends;
+a broker with unreplayed financial events must reopen/reconcile. This coordinates
+one shared local journal, not copied journals or different machines. Legacy journals
+without a baseline can establish one only after recorded fills/fees reconcile and
+recorded sales have passed their local settlement dates. Missing or corrected
+execution evidence blocks new exposure instead of being discarded.
+
+The local ceiling covers recorded PyIBQuant fills after its baseline; it is not an
+account statement or verified external-cash-flow ledger. Deposits, interest and
+other external credits do not automatically raise it. Broker caps can always lower
+spending. Advanced margin, FX and execution-correction normalization remain outside
+this implementation.
+
+On the tested TWS session, `SettledCashByDate` supplies USD
+`YYYYMMDD:amount` entries when `SettledCash` is absent. The parser selects today's
+New York balance, never tomorrow's larger balance; malformed, duplicate or nonfinite
+entries block funds. The report's total-minus-settled estimate is distinct from
+recorded local sale obligations.
+
+References checked 2026-10-21: [IBKR account balances](https://www.ibkrguides.com/traderworkstation/account-balances.htm),
+[OCC 2026 holidays and US banking closures](https://infomemo.theocc.com/infomemos?number=57897),
+[Federal Reserve holiday schedules](https://www.frbservices.org/about/holiday-schedules/).
+The default calendar is a conservative local policy, not a complete certification
+of any clearing service's operating calendar.
 
 ### Order API and runner status
 
@@ -384,7 +423,8 @@ Missing/non-USD fees remain unknown. The JSON export includes masked account
 identity, orders and executions; net realized trading P&L is reported only when
 positions are flat, fills reconcile and commissions are known. It excludes income,
 corporate actions, external holdings and account-wide returns. Execution-correction
-normalization and completed-order history recovery remain unfinished. Keep private exports
+normalization and full historical coverage remain unfinished; exact-identity
+completed-order recovery for existing journal orders is implemented. Keep private exports
 under ignored `charts/`.
 
 ### Restart recovery
@@ -403,7 +443,7 @@ assert runner.status == "paused"  # no API requests or orders during restore
 runner.resume(series)  # explicit reconciliation and fresh risk/feed checks
 ```
 
-Resume requires the same New York trading date, matching contract and run-owned
+Same-day resume requires matching contracts and run-owned
 fills/holdings, fresh live bars, a provider-confirmed regular session, fresh validated
 P&L, and no unresolved or foreign working orders. It preserves the original loss
 baseline and order budget, retains the original order caps even if the replacement
@@ -418,6 +458,19 @@ allows one executing process per run/journal. Pause retains ownership; stop rele
 it. Process exit releases the lock automatically. This does not coordinate copied
 journals, multiple machines or network filesystems. Windows execution recovery is
 not yet supported. New-date rebaselining is not automatic.
+
+To continue a checkpointed run on a later New York trading date, call
+`runner.resume(series, new_session=True)`. This requires current-day live bars,
+provider session evidence, fresh validated P&L, known recorded fees, matched
+ownership and clear orders. It records the previous and new daily P&L baselines
+as an explicit session rollover. The daily loss threshold measures change since
+that new baseline; it does not include overnight changes or provide a lifetime
+loss cap. Run identity, original order/notional/quantity caps and total consumed
+order budget remain unchanged. An exhausted run cannot regain orders by rolling
+its session. Failed checks preserve the old baseline. No missed bars are traded.
+The equity example exposes this as `--resume-run RUN_ID --new-session --execute`.
+A disconnected transport still requires opening a new broker; automatic broker
+reconnect/resubmission is not implemented.
 
 Legacy runs without a complete checkpoint remain reporting-only. Their missing
 configuration or risk state is not inferred. For a new checkpointed run, the example
@@ -693,6 +746,70 @@ zero fills/fees, complete ledger, account flat and clear reconciliation. The
 197 USD pending-buy estimate (195 premium plus 2 fee allowance) released to zero.
 Fresh read-only account preflight confirmed zero working/missing/foreign orders.
 
+### Automated selected-option strategies
+
+`OptionRunner` uses the same lifecycle, risk, session recovery, journal and
+strategy-owned flattening as `EquityRunner`. The signal feed is an independently
+owned live one-minute underlying feed. The traded instrument is one explicit,
+resolved long option; a separate exact-contract quote drives tick-valid premium
+limits. The default `premium_grid=Decimal(".05")` avoids penny-fill limitations
+of the TWS paper simulator; it is still validated against the actual broker tick
+ladder. The grid is persisted and may be configured explicitly in Python.
+Order/notional checks include the actual multiplier. Call/put selection
+and above/below-SMA entry are explicit; put selection does not silently invert a
+signal. This initial runner has these two stateless signals, not arbitrary strategy
+callbacks. There is no automatic contract selection, rolling, exercise, assignment,
+expiry-day execution or multi-leg support.
+
+```python
+from datetime import date
+from pyibquant import Option
+from pyibquant.trading.option_runner import OptionRunner
+from pyibquant.trading.runner import RunnerConfig
+
+# Supply a contract you chose and a separately owned underlying series/option quote.
+selector = Option("AAPL", date(2026, 11, 20), 365, "C")
+runner = OptionRunner(broker, RunnerConfig("AAPL", window=20), selector,
+                      entry_when="above_sma")  # observation by default
+runner.start(underlying_series)
+runner.step(underlying_series, option_quote)  # invoke as data arrives
+runner.pause()
+runner.resume(underlying_series)
+runner.stop()  # retains filled inventory
+```
+
+`flatten_plan(underlying_series, option_quote)` previews an exact owned exit;
+`flatten(...)` is an explicit execution action. Foreign/mixed holdings are refused.
+`EquityRunner.restore(broker, run_id)` dispatches an option checkpoint back to
+`OptionRunner`, preserving selector, signal, underlying/option identities,
+multiplier and original caps. Resume re-resolves the contract and rejects identity
+changes. It also supports explicit `new_session=True` under the shared checks.
+
+The example refreshes a quiet but otherwise valid live quote subscription once
+at a new decision candle when its receipts have aged out. It waits up to five
+seconds for new callbacks and then applies the same freshness/validity checks.
+Cached receipt times are never rewritten. `examples/paper_flatten.py` dispatches
+restored stock/option runs to the matching quote and owned-only exit API.
+
+The standalone example defaults to observation:
+
+```sh
+python examples/paper_option_strategy.py --profile examples/paper_aapl.json \
+  --expiry 2026-11-20 --strike 365 --right C --entry-when above_sma
+```
+
+This dated selection is an API example, not a recommended contract. Choose a valid
+unexpired contract with your own liquidity/strategy criteria. `--execute` enables
+bounded paper orders. `--resume-run RUN_ID` uses the saved selector and rejects
+selection overrides; add `--new-session --execute` only for an explicit later-day
+resume. Omitting `--execute` on restore only inspects the paused run and saves its
+audit. The profile's duration and cancel-on-stop setting apply; stopping never
+liquidates a filled option. Account reports and audits are saved under ignored
+`charts/paper/`. These new funding/rollover/option-runner paths are offline-tested.
+Bounded TWS acceptance now includes equity rollover, automatic option buy/sell,
+exact-ID disconnect recovery and reservation release. Actual next-date cash release
+and natural partial fills remain unobserved live.
+
 ### Stopping for the day and local data
 
 Let the bounded runner exit, or interrupt it with Ctrl-C. The shipped profile
@@ -710,7 +827,8 @@ data and the dated archive manifest. These files stay out of Git.
 
 Reports can be rebuilt offline with `examples/paper_report.py`; no TWS connection
 is needed for documentation, cleanup or report generation. A later trading date
-requires a new baseline/new run; same-day evidence cannot cross the date boundary.
+requires an explicit new-session baseline or a new run; same-day evidence cannot
+cross the date boundary implicitly.
 The completed four-order run's budget must not be reset or increased to continue.
 
 The runnable example defaults to observation only:
@@ -733,8 +851,7 @@ Owner-run command for a bounded ten-minute paper test:
 .venv/bin/python examples/paper_strategy.py AAPL --window 20 --seconds 600 --close-existing-share --execute --cancel-on-stop
 ```
 
-This command can send broker orders and must be run by the human operator under
-the current transaction handoff restriction. `--cancel-on-stop` cancels and waits
+This command can send paper orders and requires explicit owner authorization. `--cancel-on-stop` cancels and waits
 for this run's pending orders and any pending starting-share close. It does not
 liquidate filled strategy holdings. Reports and the strategy audit are written
 under `charts/paper/` even when start/cancellation fails. The run can end without

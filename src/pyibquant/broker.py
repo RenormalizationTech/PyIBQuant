@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from .errors import PyIBQuantError
 from .quotes import Option, Quote
+from .trading.funding import SettlementPolicy, baseline_payload, cash_ledger
 from .trading.journal import Journal
 from .trading.ledger import StrategyLedger, contract_multiplier, strategy_ledger
 
@@ -29,6 +30,9 @@ class BrokerError(PyIBQuantError):
 
 TERMINAL_ORDER_STATES = frozenset({"Filled", "Cancelled", "ApiCancelled", "Inactive"})
 PNL_SETTLE_SECONDS = 2.0
+FUNDING_EVENTS = frozenset({
+    "intent", "order", "order_status", "execution", "fee", "send_unknown", "funding_baseline",
+})
 
 
 class OrderWaitError(BrokerError):
@@ -173,6 +177,7 @@ class PaperBroker:
         paper_confirmed: bool = False,
         max_order_value: float = 500,
         max_quantity: int = 1,
+        settlement_policy: SettlementPolicy | None = None,
     ) -> None:
         if not isinstance(readonly, bool) or not isinstance(paper_confirmed, bool):
             raise ValueError("readonly and paper_confirmed must be booleans")
@@ -185,6 +190,9 @@ class PaperBroker:
             raise ValueError("max_order_value must be positive and finite")
         if isinstance(max_quantity, bool) or not isinstance(max_quantity, int) or max_quantity < 1:
             raise ValueError("max_quantity must be a positive whole number")
+        self.settlement_policy = settlement_policy or SettlementPolicy()
+        self._funding_baseline: dict[str, Any] | None = None
+        self._funding_conflicts: set[str] = set()
         self._adapter = adapter
         self.account, self.readonly = account, readonly
         self.max_order_value, self.max_quantity = cap, max_quantity
@@ -214,6 +222,7 @@ class PaperBroker:
         self._last_callback = monotonic()
         # Replay only identities/logs, never reuse old account values as current funds.
         history = self.journal.events(account)
+        self._applied_sequences = {e["sequence"] for e in history}
         self._session_clients = {
             e["session"]: e["payload"]["client_id"] for e in history
             if e["kind"] == "session" and type(e["payload"].get("client_id")) is int
@@ -228,11 +237,23 @@ class PaperBroker:
                 "execution",
                 "fee",
                 "send_unknown",
+                "funding_baseline",
             }:
                 self._apply(
                     event["kind"], event["payload"], event["received_at"],
                     source_session=event["session"],
                 )
+        if self._funding_baseline is not None:
+            try:
+                frozen_policy = SettlementPolicy.from_dict(
+                    self._funding_baseline["settlement_policy"]
+                )
+                if settlement_policy is not None and frozen_policy != settlement_policy:
+                    raise BrokerError("Settlement policy differs from durable funding baseline")
+            except (KeyError, ValueError, TypeError, InvalidOperation, BrokerError) as exc:
+                self.journal.close()
+                raise BrokerError(f"Cannot restore funding policy: {exc}") from exc
+            self.settlement_policy = frozen_policy
         if self._prior_flat_risk is None and any(e["kind"] == "pnl_validated" for e in history):
             from .trading.offline import recover_flat_reference
 
@@ -268,6 +289,7 @@ class PaperBroker:
         paper_confirmed: bool = False,
         max_order_value: float = 500,
         max_quantity: int = 1,
+        settlement_policy: SettlementPolicy | None = None,
     ) -> PaperBroker:
         from .trading.ibkr import BrokerAdapter
 
@@ -289,6 +311,7 @@ class PaperBroker:
                 paper_confirmed=paper_confirmed,
                 max_order_value=max_order_value,
                 max_quantity=max_quantity,
+                settlement_policy=settlement_policy,
             )
             adapter.subscribe(account)
             broker.wait_ready(timeout)
@@ -312,6 +335,7 @@ class PaperBroker:
             sequence = self.journal.append(self.session, self.account, stamp, kind, payload)
             self._apply(kind, payload, stamp)
             self._sequence = sequence
+            self._applied_sequences.add(sequence)
             self._changed.notify_all()
 
     def _process(self) -> None:
@@ -339,6 +363,8 @@ class PaperBroker:
         if kind == "session":
             if type(p.get("client_id")) is int:
                 self._session_clients[source_session or self.session] = p["client_id"]
+        elif kind == "funding_baseline":
+            self._funding_baseline = dict(p)
         elif kind == "value":
             if (
                 p["tag"] == "NetLiquidation"
@@ -436,9 +462,16 @@ class PaperBroker:
             if kind == "order":
                 self._observed_orders.add(key)
         elif kind == "execution":
+            old_fill = self._executions.get(p["exec_id"])
+            if old_fill is not None and any(old_fill.get(k) != p.get(k) for k in (
+                "client_id", "order_id", "con_id", "quantity", "price", "side",
+                "currency", "asset_type", "multiplier", "broker_time",
+            )):
+                self._funding_conflicts.add(f"Conflicting execution revision: {p['exec_id']}")
             self._executions[p["exec_id"]] = {
                 **p,
                 **self._fees.get(p["exec_id"], {}),
+                "first_received_at": old_fill["first_received_at"] if old_fill else stamp,
                 "received_at": stamp,
             }
             order_key = f"{p['client_id']}:{p['order_id']}"
@@ -884,8 +917,11 @@ class PaperBroker:
                     )
                 self._changed.wait(remaining)
 
-    def funding(self) -> dict[str, Any]:
-        """Conservative broker-based USD cash budget; not a margin calculation."""
+    def funding(self, *, at: datetime | None = None) -> dict[str, Any]:
+        """Fresh broker cap plus durable settled-cash ceiling, never margin capacity."""
+        at = at or datetime.now(UTC)
+        if at.utcoffset() is None:
+            raise ValueError("Funding clock must be timezone aware")
         with self._lock:
             base = self.base_currency()
 
@@ -906,7 +942,9 @@ class PaperBroker:
             if amounts["SettledCash"] is None:
                 schedule = self._values.get(("SettledCashByDate", "USD"))
                 if schedule:
-                    amounts["SettledCash"] = settled_schedule(schedule.value)
+                    amounts["SettledCash"] = settled_schedule(
+                        schedule.value, on_date=at.astimezone(ZoneInfo("America/New_York")).date()
+                    )
                     settled_source = "SettledCashByDate:USD:today"
             cash = self._values.get(("CashBalance", "USD"))
             if cash is not None and cash.number is not None:
@@ -936,22 +974,44 @@ class PaperBroker:
                 if total is not None and settled is not None
                 else None
             )
+            local: dict[str, Any] = {}
+            blocked = [f"Missing or invalid {tag}" for tag, v in amounts.items() if v is None]
+            for value in self._values.values():
+                if value.tag in {*amounts, "CashBalance", "SettledCashByDate"}:
+                    age = (at - datetime.fromisoformat(value.received_at)).total_seconds()
+                    if not 0 <= age <= 60:
+                        blocked.append(f"Stale funding field: {value.tag}")
+            if self._funding_baseline is not None:
+                try:
+                    local = cash_ledger(self._funding_baseline, tuple(self._orders.values()),
+                                        tuple(self._executions.values()), at=at)
+                except (ValueError, KeyError, TypeError, InvalidOperation) as exc:
+                    blocked.append(f"Invalid durable funding baseline: {exc}")
+                blocked.extend(local.get("funding_issues", []))
+                if usable is not None and "cash_ceiling" in local:
+                    usable = min(usable, Decimal(local["cash_ceiling"]))
+            if self._funding_baseline is None and self._orders and usable is not None:
+                try:
+                    legacy = cash_ledger(baseline_payload(
+                        usable, (), self.settlement_policy, at=at,
+                    ), tuple(self._orders.values()), tuple(self._executions.values()), at=at)
+                    if legacy["funding_issues"] or Decimal(legacy["local_unsettled"]) != 0:
+                        blocked.append("Legacy fills/settlements require reconciliation first")
+                except (KeyError, ValueError, TypeError, InvalidOperation) as exc:
+                    blocked.append(f"Invalid legacy funding coverage: {exc}")
+            blocked.extend(sorted(self._funding_conflicts))
             reserved = sum(
-                (
-                    (money(o.get("limit_price")) or Decimal(0))
-                    * (money(o.get("remaining")) or Decimal(0))
-                    * (contract_multiplier(o) or Decimal(0))
-                    + Decimal(2)
-                    for o in self._orders.values()
-                    if self._owned(o)
-                    and o.get("side") == "BUY"
-                    and o.get("status") not in {"Filled", "Cancelled", "ApiCancelled", "Inactive"}
-                ),
+                ((money(o.get("limit_price")) or Decimal(0))
+                 * (money(o.get("remaining")) or Decimal(0))
+                 * (contract_multiplier(o) or Decimal(0))
+                 + self.settlement_policy.fee_allowance
+                 for o in self._orders.values()
+                 if str(o.get("order_ref", "")).startswith("pyibquant:")
+                 and o.get("side") == "BUY" and o.get("status") not in TERMINAL_ORDER_STATES),
                 Decimal(0),
             )
-            blocked = [f"Missing or invalid {tag}" for tag, v in amounts.items() if v is None]
             invalid_reserved = any(
-                self._owned(o) and o.get("side") == "BUY"
+                str(o.get("order_ref", "")).startswith("pyibquant:") and o.get("side") == "BUY"
                 and o.get("status") not in TERMINAL_ORDER_STATES
                 and contract_multiplier(o) is None for o in self._orders.values()
             )
@@ -963,11 +1023,20 @@ class PaperBroker:
                 blocked.append("Account is not synchronized")
             if base != "USD":
                 blocked.append("USD base currency is not confirmed")
+            if any(o.get("status") not in TERMINAL_ORDER_STATES
+                   and not str(o.get("order_ref", "")).startswith("pyibquant:")
+                   for o in self._orders.values()):
+                blocked.append("Foreign working order has an untracked commitment")
+            if blocked:
+                usable = None
+            pending_estimate = local.pop("pending_buy_estimate", str(reserved))
             return dict(
+                **local,
                 policy="no_borrowing",
                 blocked_reasons=blocked,
                 unsettled_estimate=str(unsettled) if unsettled is not None else None,
-                pending_buy_estimate=None if invalid_reserved else str(reserved),
+                pending_buy_estimate=(None if invalid_reserved else
+                                      pending_estimate),
                 settled_source=settled_source,
                 base_currency=base,
                 **{k: str(v) if v is not None else None for k, v in amounts.items()},
@@ -1073,7 +1142,8 @@ class PaperBroker:
                     funding = self.funding()
                     budget = money(funding["usable"])
                     # Conservative configurable cap plus $2 fee reserve for the initial tiny orders.
-                    if price is None or budget is None or budget < price * quantity + Decimal(2):
+                    if (price is None or budget is None
+                        or budget < price * quantity + self.settlement_policy.fee_allowance):
                         details = "; ".join(funding["blocked_reasons"])
                         raise BrokerError(
                             "Insufficient or unknown broker-reported USD funds"
@@ -1089,6 +1159,37 @@ class PaperBroker:
         self, contract: Any, symbol: str, side: str, quantity: int, price: Decimal | None,
         tag: str, key: str | None, metadata: dict[str, Any] | None = None,
     ) -> int:
+        """Serialize account cash commitments across local broker processes."""
+        from .trading.checkpoint import RunLease
+
+        lease = RunLease(self.journal.path, "funding")
+        with self._commands:
+            lease.acquire()
+            try:
+                history = self.journal.events(self.account)
+                if any(e["kind"] in FUNDING_EVENTS and e["sequence"] not in self._applied_sequences
+                       for e in history):
+                    raise BrokerError(
+                        "Funding journal changed; reopen and reconcile before sending"
+                    )
+                durable = {(e["payload"].get("client_id"), e["payload"]["order_id"])
+                           for e in history if e["kind"] == "intent"}
+                replayed = {(o.get("client_id"), o["order_id"]) for o in self._orders.values()}
+                baselines = [e["payload"] for e in history if e["kind"] == "funding_baseline"]
+                if (not durable <= replayed
+                    or (baselines and baselines[-1] != self._funding_baseline)):
+                    raise BrokerError(
+                        "Funding journal changed; reopen and reconcile before sending"
+                    )
+                return self._send_funded_intent(contract, symbol, side, quantity, price, tag, key,
+                                                metadata)
+            finally:
+                lease.release()
+
+    def _send_funded_intent(
+        self, contract: Any, symbol: str, side: str, quantity: int, price: Decimal | None,
+        tag: str, key: str | None, metadata: dict[str, Any] | None,
+    ) -> int:
         """Shared durable identity/send boundary for validated equity and option orders."""
         if not isinstance(tag, str) or len(tag) > 100:
             raise ValueError("tag must be a string of at most 100 characters")
@@ -1098,6 +1199,36 @@ class PaperBroker:
             order_ref = "pyibquant:" + (key or uuid4().hex)
             if any(o.get("order_ref") == order_ref for o in self._orders.values()):
                 raise BrokerError("Order idempotency key already exists")
+            if side == "BUY":
+                try:
+                    self.settlement_policy.settlement_date(
+                        datetime.now(ZoneInfo("America/New_York")).date(),
+                        (metadata or {}).get("asset_type", "STK"), "USD",
+                    )
+                except ValueError as exc:
+                    raise BrokerError(f"No supported settlement coverage: {exc}") from exc
+                funds = money(self.funding()["usable"])
+                cost = (price or Decimal(0)) * quantity * (
+                    contract_multiplier(metadata or {}) or Decimal(1)
+                ) + self.settlement_policy.fee_allowance
+                if funds is None or funds < cost:
+                    raise BrokerError("Funding changed before durable reservation; no order sent")
+            if self._funding_baseline is None:
+                funds = money(self.funding()["usable"])
+                if funds is not None:
+                    # Existing journals migrate only after fully explained terminal fills.
+                    legacy = cash_ledger(baseline_payload(
+                        funds, (), self.settlement_policy,
+                    ), tuple(self._orders.values()), tuple(self._executions.values()),
+                        at=datetime.now(UTC))
+                    if not legacy["funding_issues"] and Decimal(legacy["local_unsettled"]) == 0:
+                        self._record("funding_baseline", baseline_payload(
+                            funds, tuple(self._executions.values()), self.settlement_policy,
+                        ))
+                # An explicit owned/holding-only exit is still allowed when cash is
+                # unknown. Such legacy fills must settle/reconcile before a later BUY.
+                if self._funding_baseline is None and side == "BUY":
+                    raise BrokerError("Legacy fills/settlements require reconciliation first")
             oid = self._adapter.allocate_id()
             self._record("intent", dict(
                 order_id=oid, client_id=self._adapter.client_id, account=self.account,
@@ -1105,7 +1236,9 @@ class PaperBroker:
                 side=side, quantity=str(quantity),
                 limit_price=str(price) if price is not None else None,
                 order_type="LMT" if price is not None else "MKT",
-                filled="0", remaining=str(quantity), status="PendingSubmit", **(metadata or {}),
+                filled="0", remaining=str(quantity), status="PendingSubmit",
+                fee_allowance=str(self.settlement_policy.fee_allowance),
+                **({"asset_type": "STK", "currency": "USD"} | (metadata or {})),
             ))
         try:
             self._adapter.send_order(oid, contract, side, quantity, price, self.account, order_ref)

@@ -1,6 +1,6 @@
 # Development handoff
 
-Documentation reviewed: 2026-10-20. Implementation/release baseline: 2026-10-16,
+Documentation reviewed: 2026-10-21. Implementation/release baseline: 2026-10-16,
 Git checkpoint `f0f79a6`. The primary workflow is on-demand IBKR historical data →
 Python research → backtesting. Selected-option historical acquisition is implemented;
 a first single-contract historical-bar option backtest is also implemented.
@@ -18,6 +18,90 @@ existing optional viewer; scope new plots around concrete research/backtest resu
 and account/order performance tracking.
 
 ## Where to resume
+
+
+### Paper execution acceptance — 2026-10-21
+
+The owner explicitly requested agent-run bounded paper testing in this chat.
+Validation after the quote-refresh fix: 850 tests, Ruff, mypy (43 source files),
+source archive/wheel and isolated SDK-free smoke/CLI all pass.
+The new execution paths now have TWS paper evidence:
+
+- Cross-session equity recovery: restored `77d386816acd417e94d29b1545d9b339`
+  from October 20 with two orders consumed, explicitly rolled its daily baseline,
+  and automatically filled one BUY and one SELL on October 21. The original
+  four-order lifetime cap is consumed, ownership reconciles flat and fees are
+  complete. Today's two fills net -2.207100 USD; the whole run nets -5.434111 USD.
+- Selected-option automation: `5ea6f20b6bb647918879d36711dbbfbc`, one AAPL
+  2026-11-20 365 C, multiplier 100, two-order cap and six-minute bound. The
+  above-SMA runner automatically filled BUY 3.25 and SELL 3.05. Gross -20 USD,
+  fees 1.536883, net -21.536883; complete ledger and flat. These are paper results.
+- Quiet unchanged option BBOs exposed a caller usability issue. The option example
+  now makes one bounded data-subscription refresh at a new decision candle when
+  otherwise valid live BBO receipts are stale. It obtains new broker callbacks;
+  it never re-dates cached fields or relaxes the 15-second guard. Delayed, crossed,
+  missing and disconnected inputs are not retried by this helper. The bounded run
+  recorded six live completed-bar signals and six quote refreshes.
+- Unknown-send reservation: check `c3eda727ed824cc28fc9e14b8e568b05`, client 297
+  order 3, one send attempt. Deliberate own-socket disconnect produced UnknownSend.
+  The local 339.02 USD reservation survived restart and the cancellation request.
+  Exact-ID recovery canceled that same order unfilled, with no replacement;
+  the reservation released to zero and reconciliation is clear.
+- Both actual run checkpoints were restored from a consistent journal backup:
+  paused, correct option/equity identity, consumed caps preserved, no old balances
+  reused as current funds. A fresh read-only TWS preflight passed every check.
+  Final account flat, zero pending reservation and no unresolved/foreign orders.
+
+Evidence: ignored `charts/paper/acceptance-2026-10-21/summary.json` and its component
+reports; original check artifacts remain under `charts/paper/cancel-checks/` and
+run audits under `charts/paper/runs/`. Keep the journal and all recovery identities.
+The two exhausted runs are reporting-only for normal strategy execution; do not
+increase/reset their budgets to obtain more fills. Explicit owned exits remain
+separate from strategy entry/resume.
+
+Both recorded sales are held locally until October 22 under the saved conservative
+policy, capped by fresh broker balances. Actual next-date release cannot be observed
+on October 21. It and natural partial fills remain pending live observations;
+deterministic tests cover both. Automatic broker reconnect, execution corrections
+and full historical coverage remain separate backlog. No real-money account was used.
+
+
+Cleanup after acceptance: removed session scratch scripts, redundant temporary logs,
+temporary build directories, synthetic funding-report outputs and Python/tool caches.
+Preserved reusable modules/examples/tests, private journals and recovery files,
+acceptance reports, the virtual environment and existing distribution artifacts.
+Source and documentation changes remain uncommitted.
+
+
+### Earlier implementation checkpoint — 2026-10-21
+
+Historical checkpoint, superseded by the paper acceptance above.
+
+Implemented and offline-tested: durable USD funding baseline and versioned local
+settlement policy; immediate buy/fee debits, partial-fill commitments and retained
+cancellation/unknown-send reservations; dated sale release capped by fresh broker
+funds; replay and local transmission locking. Explicit session rollover preserves
+run ownership/configuration/order budgets while recording a fresh daily P&L
+baseline. The selected long-option above/below-SMA runner shares those controls,
+including checkpoint restore and owned flatten. Observation remains the default.
+
+Validation: 844 tests, Ruff, mypy (43 source files), source archive/wheel, isolated
+SDK-free smoke/CLI and the synthetic offline Chrome account-report check pass.
+
+These are code/offline-test results, not additional TWS execution acceptance.
+Read-only TWS preflight passed against the existing journal on October 21:
+account, order reconciliation, funding, flat starting holdings and P&L checks all
+passed with transmission disabled. Evidence: ignored
+`charts/paper/funding-preflight-2026-10-21.json`. A read-only selected-option
+runner check resolved the contract and started, then paused on a live-quote
+validity/freshness check before a completed signal; zero order intents. Summary:
+`charts/paper/option-observation-2026-10-21.json`. This is a verified refusal, not
+successful automated execution. At that checkpoint, bounded execution acceptance was pending; it subsequently
+passed as recorded above. No order was sent during the initial offline validation. Automatic broker reconnect, full historical coverage,
+execution-correction normalization and verified external cash flows remain open.
+The local cash ceiling does not automatically credit external deposits/interest;
+the default conservative closure calendar covers 2026–2027. See docs/API.md.
+
 
 ### Stop checkpoint — 2026-10-20
 

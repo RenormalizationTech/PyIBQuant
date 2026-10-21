@@ -32,11 +32,15 @@ from pyibquant.research import simple_returns, sma
 from pyibquant.simulation import Feed, NextOpen, TargetStrategy, simulate
 from pyibquant.studies import daily_correlations, intraday_scaling
 from pyibquant.trading.cancel_check import check_tag
+from pyibquant.trading.funding import SettlementPolicy
+from pyibquant.trading.option_runner import OptionRunner
 from pyibquant.trading.profile import PaperProfile
 
 assert Path(pyibquant.__file__).is_relative_to(Path(sys.prefix)), pyibquant.__file__
 assert importlib.util.find_spec('ibapi') is None, 'Use an environment without the SDK'
 assert importlib.util.find_spec('pyarrow') is None, 'Base wheel must work without Parquet'
+assert OptionRunner is not None
+assert SettlementPolicy.from_dict(SettlementPolicy().to_dict()) == SettlementPolicy()
 assert 'ibapi' not in sys.modules
 assert 'pyarrow' not in sys.modules
 assert importlib.util.find_spec('pandas') is None, 'Base exports must work without pandas'

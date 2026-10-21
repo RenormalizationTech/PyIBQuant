@@ -111,6 +111,8 @@ def main() -> None:
     parser.add_argument(
         "--resume-run", help="Restore a checkpointed run ID; stays paused without --execute"
     )
+    parser.add_argument("--new-session", action="store_true",
+                        help="With --resume-run --execute: reconcile and set a new daily baseline")
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--execute", action="store_true", help="Enable paper order submission")
     parser.add_argument(
@@ -125,6 +127,8 @@ def main() -> None:
     )
     parser.add_argument("--journal", type=Path)
     args = parser.parse_args()
+    if args.new_session and (not args.resume_run or not args.execute):
+        parser.error("--new-session requires --resume-run and --execute")
     if args.check_controls and (not args.execute or args.resume_run or args.close_existing_share):
         parser.error("--check-controls requires a new --execute run without starting-share close")
     try:
@@ -221,7 +225,7 @@ def main() -> None:
                     if args.close_existing_share:
                         close_starting_share(broker, series, stream.latest(), execute=args.execute)
                     if restored is not None:
-                        runner.resume(series)
+                        runner.resume(series, new_session=args.new_session)
                     else:
                         runner.start(series)
                     print(

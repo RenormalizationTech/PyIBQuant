@@ -73,6 +73,39 @@ class EquityRunner:
         self._lease = RunLease(broker.journal.path, self.run_id)
         self._restored_checkpoint: int | None = None
 
+    @property
+    def trade_instrument_id(self) -> int | None:
+        return self._instrument_id
+
+    def _prepare_contract(self, series: BarSeries) -> None:
+        """Resolve an optional traded derivative separately from the signal feed."""
+
+    def _check_lifecycle(self, at: datetime) -> None:
+        """Instrument-specific trading restrictions, shared by resume/step/flatten."""
+
+    def _execution_checkpoint(self) -> dict[str, Any]:
+        return {"kind": "equity"}
+
+    def _quote_matches(self, quote: Quote) -> bool:
+        return (quote.instrument.symbol == self.config.symbol
+                and quote.instrument.instrument_id == self.trade_instrument_id)
+
+    def _limit_price(self, quote: Quote, side: str) -> Decimal:
+        price = Decimal(str(quote.ask if side == "BUY" else quote.bid))
+        price *= Decimal("1.0005") if side == "BUY" else Decimal(".9995")
+        return price.quantize(Decimal(".01"), rounding=ROUND_UP if side == "BUY" else ROUND_DOWN)
+
+    def _notional(self, price: Decimal, quantity: Decimal) -> Decimal:
+        return price * quantity
+
+    def _submit_order(self, side: str, quantity: int, price: Decimal, quote: Quote,
+                      *, key: str) -> int:
+        return self.broker.submit_limit(self.config.symbol, side, quantity, float(price),
+                                        tag=self.run_id, key=key)
+
+    def _target(self, closes: list[float]) -> int:
+        return self.config.quantity if above_sma(closes, self.config.window)[-1] else 0
+
     def _require_execution(self) -> None:
         if not self.config.dry_run and self.broker.readonly:
             raise BrokerError("Execution runner requires an explicitly enabled paper broker")
@@ -115,6 +148,7 @@ class EquityRunner:
         self._log(
             "runner_checkpoint",
             version=1,
+            execution=self._execution_checkpoint(),
             config=asdict(self.config),
             instrument_id=self._instrument_id,
             day=self._day,
@@ -132,7 +166,8 @@ class EquityRunner:
         """Restore identity/configuration/risk limits, paused, without any API requests.
 
         Holdings come from durable executions, never a checkpoint position guess.
-        Explicit resume requires the same trading date, fresh account/feed/P&L,
+        Explicit resume requires fresh account/feed/P&L; a later trading date
+        additionally requires new_session=True. Resume requires
         reconciled holdings and no unresolved orders. Old incomplete journals fail.
         """
         if (
@@ -177,7 +212,18 @@ class EquityRunner:
                 raise ValueError("invalid checkpoint state")
         except (KeyError, TypeError, ValueError) as exc:
             raise BrokerError(f"Invalid runner checkpoint: {exc}") from exc
-        runner = cls(broker, config)
+        execution = p.get("execution", {"kind": "equity"})
+        if not isinstance(execution, dict):
+            raise BrokerError("Invalid runner execution checkpoint")
+        runner: EquityRunner
+        if execution.get("kind") == "option":
+            from .option_runner import OptionRunner
+
+            runner = OptionRunner.from_execution_checkpoint(broker, config, execution)
+        elif execution.get("kind") == "equity":
+            runner = EquityRunner(broker, config)
+        else:
+            raise BrokerError("Unsupported runner execution checkpoint")
         runner.run_id, runner._seen, runner._day = run_id, seen, day
         runner._instrument_id, runner._pnl_baseline = instrument_id, baseline
         runner._order_cap, runner._quantity_cap = cap, quantity_cap
@@ -258,11 +304,14 @@ class EquityRunner:
                 raise BrokerError("Runner requires its own live one-minute equity feed")
             if series.instrument_id is None or series.instrument_id <= 0:
                 raise BrokerError("Runner requires a resolved contract identity")
+            self._prepare_contract(series)
+            self._check_lifecycle(at)
             snapshot = self.broker.snapshot()
             if not snapshot.complete:
                 raise BrokerError("Synchronize the account before starting")
             if not self.config.dry_run and any(
-                p.get("symbol") == self.config.symbol and money(p.get("quantity")) != 0
+                p.get("con_id") == (self.trade_instrument_id or series.instrument_id)
+                and money(p.get("quantity")) != 0
                 for p in snapshot.positions
             ):
                 raise BrokerError("Execution example requires a flat selected symbol at start")
@@ -314,10 +363,14 @@ class EquityRunner:
         """Separate from stop; never cancel another strategy run's orders."""
         return self.broker.cancel_owned_orders(tag=self.run_id, timeout=timeout)
 
-    def resume(self, series: BarSeries, *, at: datetime | None = None) -> None:
+    def resume(
+        self, series: BarSeries, *, at: datetime | None = None, new_session: bool = False,
+    ) -> None:
         """Resume a paused in-memory run after a read-only reconciliation.
 
-        Keeps its loss baseline, order count and strategy identity. Skips bars
+        Keeps order count and strategy identity. The loss baseline is preserved
+        within a day; a later day requires explicit new_session=True and fresh
+        broker P&L/ownership reconciliation. Skips bars
         observed during the pause. A disconnected broker requires a new session;
         this method does not reconnect or restore a process from a checkpoint.
         """
@@ -330,8 +383,11 @@ class EquityRunner:
             if at.utcoffset() is None:
                 raise ValueError("Runner clock must be timezone aware")
             day = at.astimezone(ZoneInfo("America/New_York")).date().isoformat()
-            if day != self._day:
-                raise BrokerError("New trading date requires a new session baseline")
+            rollover = day != self._day
+            if rollover and (not new_session or day < self._day):
+                raise BrokerError("New trading date requires explicit new_session=True")
+            if new_session and not rollover:
+                raise BrokerError("A new session baseline requires a later trading date")
             if (
                 series.symbol != self.config.symbol
                 or series.instrument_id != self._instrument_id
@@ -355,9 +411,20 @@ class EquityRunner:
                 or not isinstance(bars[-1].timestamp, datetime)
             ):
                 raise BrokerError("Resume requires fresh intraday bars")
+            if rollover and (
+                bars[-1].timestamp.astimezone(
+                    ZoneInfo("America/New_York")
+                ).date().isoformat() != day
+                or not 0 <= (at - bars[-1].timestamp).total_seconds() < 60
+            ):
+                raise BrokerError("New session requires a current-day live candle")
             if bars[-1].timestamp < self._seen:
                 raise BrokerError("Resume feed is behind the persisted candle cursor")
+            self._prepare_contract(series)
+            self._check_lifecycle(at)
             report = self.broker.reconcile()
+            if real_clock:
+                at = datetime.now(UTC)
             if not report.clear:
                 raise BrokerError("Resolve working or uncertain orders before resuming")
             if not self.config.dry_run:
@@ -371,32 +438,66 @@ class EquityRunner:
                     (
                         money(p.get("quantity"))
                         for p in report.snapshot.positions
-                        if p.get("con_id") == series.instrument_id
+                        if p.get("con_id") == self.trade_instrument_id
                     ),
                     Decimal(0),
                 )
-                owned = dict(ledger.positions).get(series.instrument_id, Decimal(0))
+                owned = dict(ledger.positions).get(self.trade_instrument_id or -1, Decimal(0))
                 if not ledger.complete or held is None or held != owned:
                     raise BrokerError(
                         "Strategy fills and account holdings differ; reconcile manually"
                     )
-                risk, at = self._risk_snapshot(report.snapshot, at, real_clock=real_clock)
+                if rollover and ledger.commissions is None:
+                    raise BrokerError("Confirm all recorded fees before changing session baseline")
+                risk, at = self._risk_snapshot(
+                    report.snapshot, at, real_clock=real_clock, force=rollover,
+                )
                 pnl = self._fresh_pnl(risk, at)
                 if pnl is None or self._pnl_baseline is None:
                     raise BrokerError("Fresh broker P&L is required to resume")
-                reason = self._loss_reason(pnl)
+                reason = self._loss_reason(pnl) if not rollover else None
                 if reason:
                     raise BrokerError(reason)
                 self._orders = max(self._orders, self._intent_count())
                 if self._orders >= self.config.max_orders:
                     raise BrokerError("Per-run order limit reached")
+                # Reconciliation/risk requests may span a candle boundary. Re-arm
+                # from the newest live candle, not the snapshot taken before I/O.
+                with series._lock:
+                    live_stamp = series.last_live_update
+                    latest = series.snapshot()
+                if real_clock:
+                    at = datetime.now(UTC)
+                if (live_stamp is None
+                    or not 0 <= (at - live_stamp).total_seconds() <= self.config.max_data_age
+                    or at.astimezone(ZoneInfo("America/New_York")).date().isoformat() != day
+                    or not latest or not isinstance(latest[-1].timestamp, datetime)
+                    or latest[-1].timestamp < bars[-1].timestamp
+                    or not 0 <= (at - latest[-1].timestamp).total_seconds() < 60
+                    or not any(s["regular"] and s["start"] <= at.timestamp() < s["end"]
+                               for s in series.sessions)):
+                    raise BrokerError("Resume market inputs became stale during reconciliation")
+                bars = latest
+                if self._fresh_pnl(risk, at) is None:
+                    raise BrokerError("Broker P&L became stale during resume")
                 self._lease.acquire()
                 try:
                     self._check_restored_state()
                 except Exception:
                     self._lease.release()
                     raise
+            if rollover:
+                # A daily loss baseline changes only after reconciliation, risk checks,
+                # lease acquisition and the original checkpoint/cap checks succeed.
+                old_day, old_baseline = self._day, self._pnl_baseline
+                self._day = day
+                self._pnl_baseline = self._fresh_pnl(risk, at) if not self.config.dry_run else None
+                self._log("runner_session_rollover", previous_day=old_day, day=day,
+                          previous_baseline=str(old_baseline),
+                          pnl_baseline=str(self._pnl_baseline),
+                          orders=self._orders, baseline_policy="explicit_daily_reset")
             self._restored_checkpoint = None
+            assert isinstance(bars[-1].timestamp, datetime)
             self._seen = bars[-1].timestamp
             self.status, self.reason = "running", ""
             self._log("runner_resume", skipped_through=self._seen.isoformat())
@@ -422,17 +523,18 @@ class EquityRunner:
                 series.symbol != self.config.symbol
                 or series.instrument_id is None
                 or series.instrument_id != self._instrument_id
-                or quote.instrument.symbol != self.config.symbol
-                or quote.instrument.instrument_id != series.instrument_id
+                or not self._quote_matches(quote)
             ):
                 raise BrokerError("Flatten feed/quote instrument mismatch")
+            self._prepare_contract(series)
+            self._check_lifecycle(at)
             ledger = self.broker.strategy_ledger(self.run_id)
-            owned = dict(ledger.positions).get(series.instrument_id, Decimal(0))
+            owned = dict(ledger.positions).get(self.trade_instrument_id or -1, Decimal(0))
             held = next(
                 (
                     money(p.get("quantity"))
                     for p in report.snapshot.positions
-                    if p.get("con_id") == series.instrument_id
+                    if p.get("con_id") == self.trade_instrument_id
                 ),
                 Decimal(0),
             )
@@ -448,7 +550,7 @@ class EquityRunner:
                 )
             if owned == 0:
                 return dict(run_id=self.run_id, symbol=self.config.symbol, quantity=0,
-                            con_id=series.instrument_id, side="SELL", limit_price=None,
+                            con_id=self.trade_instrument_id, side="SELL", limit_price=None,
                             checked_at=at.isoformat())
             receipts = dict(quote.field_received_at)
             if (
@@ -471,13 +573,11 @@ class EquityRunner:
                 s["regular"] and s["start"] <= at.timestamp() < s["end"] for s in series.sessions
             ):
                 raise BrokerError("Flatten requires a provider-confirmed regular session")
-            price = (Decimal(str(quote.bid)) * Decimal(".9995")).quantize(
-                Decimal(".01"), rounding=ROUND_DOWN
-            )
-            if owned > self._quantity_cap or price * owned > self._order_cap:
+            price = self._limit_price(quote, "SELL")
+            if owned > self._quantity_cap or self._notional(price, owned) > self._order_cap:
                 raise BrokerError("Restored run's order quantity/notional cap exceeded")
             return dict(
-                run_id=self.run_id, symbol=self.config.symbol, con_id=series.instrument_id,
+                run_id=self.run_id, symbol=self.config.symbol, con_id=self.trade_instrument_id,
                 quantity=int(owned), side="SELL", limit_price=str(price),
                 checked_at=at.isoformat(), bid=quote.bid, ask=quote.ask,
                 max_order_value=str(self._order_cap),
@@ -504,12 +604,8 @@ class EquityRunner:
             plan = self.flatten_plan(series, quote, at=at)
             if plan["quantity"] == 0:
                 return None
-            oid = self.broker.submit_limit(
-                self.config.symbol,
-                "SELL",
-                plan["quantity"],
-                float(plan["limit_price"]),
-                tag=self.run_id,
+            oid = self._submit_order(
+                "SELL", plan["quantity"], Decimal(plan["limit_price"]), quote,
                 key="flatten:" + uuid4().hex,
             )
             self._orders += 1
@@ -534,10 +630,14 @@ class EquityRunner:
                 or series.instrument_id != self._instrument_id
                 or series.interval != "1min"
                 or not series.live
-                or quote.instrument.symbol != self.config.symbol
-                or quote.instrument.instrument_id != series.instrument_id
+                or not self._quote_matches(quote)
             ):
                 self.pause("Feed/quote instrument mismatch")
+                return None
+            try:
+                self._check_lifecycle(at)
+            except BrokerError as exc:
+                self.pause(str(exc))
                 return None
             snap = self.broker.snapshot()
             if not snap.complete or series.error or series.connection_state != "subscribed":
@@ -607,6 +707,13 @@ class EquityRunner:
                     for k in ("bid", "ask")
                 )
             ):
+                self._log("runner_quote_check_failed", checked_at=at.isoformat(),
+                          market_data_type=quote.market_data_type, quote_status=quote.status,
+                          bid=quote.bid, ask=quote.ask, crossed=quote.crossed,
+                          field_ages={
+                              k: (at - receipts[k]).total_seconds() if k in receipts else None
+                              for k in ("bid", "ask")},
+                          max_data_age=self.config.max_data_age)
                 self.pause("Quote is stale, missing, delayed, frozen or crossed")
                 return None
             completed = tuple(b for b in bars if b.timestamp < current)
@@ -621,11 +728,7 @@ class EquityRunner:
             ):
                 self.pause("Gap in SMA warmup; wait for a complete contiguous window")
                 return None
-            target = (
-                self.config.quantity
-                if above_sma([b.close for b in trailing], self.config.window)[-1]
-                else 0
-            )
+            target = self._target([b.close for b in trailing])
             self._log(
                 "signal",
                 bar_time=previous.isoformat(),
@@ -671,7 +774,7 @@ class EquityRunner:
             if self.broker.funding()["pending_owned_order"]:
                 self._log("signal_skipped", reason="Owned order still unresolved")
                 return None
-            selected = [p for p in snap.positions if p.get("con_id") == series.instrument_id]
+            selected = [p for p in snap.positions if p.get("con_id") == self.trade_instrument_id]
             if any(money(p.get("quantity")) is None for p in selected):
                 self.pause("Selected-symbol position quantity is unknown")
                 return None
@@ -679,7 +782,7 @@ class EquityRunner:
                 (
                     money(p.get("quantity")) or Decimal(0)
                     for p in snap.positions
-                    if p.get("con_id") == series.instrument_id
+                    if p.get("con_id") == self.trade_instrument_id
                 ),
                 Decimal(0),
             )
@@ -688,7 +791,7 @@ class EquityRunner:
                 return None
             ledger = self.broker.strategy_ledger(self.run_id)
             if not ledger.complete or held != dict(ledger.positions).get(
-                series.instrument_id, Decimal(0)
+                self.trade_instrument_id or -1, Decimal(0)
             ):
                 self.pause("Account holdings differ from strategy-owned executions")
                 return None
@@ -700,19 +803,18 @@ class EquityRunner:
                 self.pause("Per-run order limit reached")
                 return None
             side = "BUY" if delta > 0 else "SELL"
-            price = Decimal(str(quote.ask if delta > 0 else quote.bid))
-            price *= Decimal("1.0005") if delta > 0 else Decimal(".9995")
-            price = price.quantize(Decimal(".01"), rounding=ROUND_UP if delta > 0 else ROUND_DOWN)
-            if abs(delta) > self._quantity_cap or price * abs(delta) > self._order_cap:
+            try:
+                price = self._limit_price(quote, side)
+                notional = self._notional(price, abs(delta))
+            except BrokerError as exc:
+                self.pause(str(exc))
+                return None
+            if (abs(delta) > self._quantity_cap or notional > self._order_cap):
                 self.pause("Run's persisted order quantity/notional cap exceeded")
                 return None
             try:
-                oid = self.broker.submit_limit(
-                    self.config.symbol,
-                    side,
-                    int(abs(delta)),
-                    float(price),
-                    tag=self.run_id,
+                oid = self._submit_order(
+                    side, int(abs(delta)), price, quote,
                     key=self.run_id[:12] + ":" + str(int(previous.timestamp())),
                 )
             except BrokerError as exc:

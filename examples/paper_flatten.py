@@ -1,4 +1,4 @@
-"""Inspect or explicitly flatten one exact run's reconciled AAPL holdings.
+"""Inspect or explicitly flatten one exact run's reconciled AAPL stock/option holdings.
 
 Default is read-only. --execute submits at most one bounded limit SELL, waits for
 terminal evidence and applies the saved pending-order cleanup policy. No BUY,
@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from pyibquant import BrokerError, Market, PaperBroker
 from pyibquant.broker import money
+from pyibquant.trading.option_runner import OptionRunner
 from pyibquant.trading.profile import PaperProfile
 from pyibquant.trading.runner import EquityRunner
 
@@ -48,7 +49,8 @@ def main():
                 series = market.bars(
                     profile.symbol, interval="1min", duration="1 D", include_sessions=True
                 )
-                with market.stream_quote(profile.symbol) as stream:
+                selector = runner.selector if isinstance(runner, OptionRunner) else profile.symbol
+                with market.stream_quote(selector) as stream:
                     deadline = monotonic() + 15
                     while True:
                         q = stream.latest()

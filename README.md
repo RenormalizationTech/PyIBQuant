@@ -12,7 +12,11 @@ backtests, a strategy-driven portfolio simulator, stock/option quotes and intera
 Read-only paper-account monitoring and an experimental paper broker/strategy runner
 are implemented. Bounded AAPL strategy execution, same-day restart, cancellation
 and disconnect-after-send recovery have owner-run paper validation. Selected-option
-buy/sell and cancellation are also validated; automated option strategies remain open.
+buy/sell and cancellation are also validated. A selected-option SMA runner, durable
+settlement funding and explicit cross-session resume are implemented. Bounded TWS
+checks now verify equity rollover, automatic option buy/sell and uncertain-send
+reservation recovery. Actual next-date cash release and natural partial fills
+remain live acceptance gaps.
 
 ## Project documents
 
@@ -49,8 +53,9 @@ and replaceable execution models. Named multi-instrument datasets, quality repor
 and two lightweight scientific study starters are also implemented.
 Paper account monitoring and persistent performance/order history are implemented.
 Paper execution and its runner remain experimental beyond the validated bounded
-checks: automatic broker reconnect, multi-session recovery, settlement accounting
-and execution corrections remain open; see [the staged plan](PROJECT_PLAN.md#24-phase-6--algorithmic-paper-trading-and-account-performance).
+checks: automatic broker reconnect, execution corrections and full historical
+coverage remain open. Durable settlement funding, explicit session rollover and
+selected-option automation are now offline-tested; see [the staged plan](PROJECT_PLAN.md#24-phase-6--algorithmic-paper-trading-and-account-performance).
 Historical bars do not supply quote receipt times,
 quote sizes or historical Greeks.
 
@@ -131,6 +136,13 @@ The human-run `--execute` check submits one AAPL limit buy below bid, then cance
 only that order and confirms the result. Any fill is reported and retained.
 See [cancellation check and recovery](docs/API.md#paper-cancellation-check-and-recovery)
 before execution or recovery; uncertain outcomes must not be blindly resubmitted.
+
+The selected-option runner is also available via
+`examples/paper_option_strategy.py`; choose an explicit contract and above/below-SMA
+entry rule. It defaults to observation and shares equity lifecycle/recovery controls.
+See [option automation and limitations](docs/API.md#automated-selected-option-strategies)
+and [settlement funding](docs/API.md#cash-account-versus-margin-account-without-borrowing).
+Later-day recovery is explicit (`--new-session`); it preserves the run's order budget.
 
 ## First slice: IBKR → Python → HTML chart
 

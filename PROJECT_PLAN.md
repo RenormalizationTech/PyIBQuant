@@ -6,7 +6,81 @@
 
 ---
 
-## Implementation checkpoint — 2026-10-20
+### Paper execution acceptance — 2026-10-21
+
+The owner explicitly requested agent-run bounded paper testing in this chat.
+Validation after the quote-refresh fix: 850 tests, Ruff, mypy (43 source files),
+source archive/wheel and isolated SDK-free smoke/CLI all pass.
+The new execution paths now have TWS paper evidence:
+
+- Cross-session equity recovery: restored `77d386816acd417e94d29b1545d9b339`
+  from October 20 with two orders consumed, explicitly rolled its daily baseline,
+  and automatically filled one BUY and one SELL on October 21. The original
+  four-order lifetime cap is consumed, ownership reconciles flat and fees are
+  complete. Today's two fills net -2.207100 USD; the whole run nets -5.434111 USD.
+- Selected-option automation: `5ea6f20b6bb647918879d36711dbbfbc`, one AAPL
+  2026-11-20 365 C, multiplier 100, two-order cap and six-minute bound. The
+  above-SMA runner automatically filled BUY 3.25 and SELL 3.05. Gross -20 USD,
+  fees 1.536883, net -21.536883; complete ledger and flat. These are paper results.
+- Quiet unchanged option BBOs exposed a caller usability issue. The option example
+  now makes one bounded data-subscription refresh at a new decision candle when
+  otherwise valid live BBO receipts are stale. It obtains new broker callbacks;
+  it never re-dates cached fields or relaxes the 15-second guard. Delayed, crossed,
+  missing and disconnected inputs are not retried by this helper. The bounded run
+  recorded six live completed-bar signals and six quote refreshes.
+- Unknown-send reservation: check `c3eda727ed824cc28fc9e14b8e568b05`, client 297
+  order 3, one send attempt. Deliberate own-socket disconnect produced UnknownSend.
+  The local 339.02 USD reservation survived restart and the cancellation request.
+  Exact-ID recovery canceled that same order unfilled, with no replacement;
+  the reservation released to zero and reconciliation is clear.
+- Both actual run checkpoints were restored from a consistent journal backup:
+  paused, correct option/equity identity, consumed caps preserved, no old balances
+  reused as current funds. A fresh read-only TWS preflight passed every check.
+  Final account flat, zero pending reservation and no unresolved/foreign orders.
+
+Evidence: ignored `charts/paper/acceptance-2026-10-21/summary.json` and its component
+reports; original check artifacts remain under `charts/paper/cancel-checks/` and
+run audits under `charts/paper/runs/`. Keep the journal and all recovery identities.
+The two exhausted runs are reporting-only for normal strategy execution; do not
+increase/reset their budgets to obtain more fills. Explicit owned exits remain
+separate from strategy entry/resume.
+
+Both recorded sales are held locally until October 22 under the saved conservative
+policy, capped by fresh broker balances. Actual next-date release cannot be observed
+on October 21. It and natural partial fills remain pending live observations;
+deterministic tests cover both. Automatic broker reconnect, execution corrections
+and full historical coverage remain separate backlog. No real-money account was used.
+
+## Earlier implementation checkpoint — 2026-10-21
+
+Historical checkpoint, superseded by the paper acceptance above.
+
+Implemented and offline-tested: durable USD funding baseline and versioned local
+settlement policy; immediate buy/fee debits, partial-fill commitments and retained
+cancellation/unknown-send reservations; dated sale release capped by fresh broker
+funds; replay and local transmission locking. Explicit session rollover preserves
+run ownership/configuration/order budgets while recording a fresh daily P&L
+baseline. The selected long-option above/below-SMA runner shares those controls,
+including checkpoint restore and owned flatten. Observation remains the default.
+
+Validation: 844 tests, Ruff, mypy (43 source files), source archive/wheel, isolated
+SDK-free smoke/CLI and the synthetic offline Chrome account-report check pass.
+
+These are code/offline-test results, not additional TWS execution acceptance.
+Read-only TWS preflight passed against the existing journal on October 21:
+account, order reconciliation, funding, flat starting holdings and P&L checks all
+passed with transmission disabled. Evidence: ignored
+`charts/paper/funding-preflight-2026-10-21.json`. A read-only selected-option
+runner check resolved the contract and started, then paused on a live-quote
+validity/freshness check before a completed signal; zero order intents. Summary:
+`charts/paper/option-observation-2026-10-21.json`. This is a verified refusal, not
+successful automated execution. At that checkpoint, bounded execution acceptance was pending; it subsequently
+passed as recorded above. No order was sent during the initial offline validation. Automatic broker reconnect, full historical coverage,
+execution-correction normalization and verified external cash flows remain open.
+The local cash ceiling does not automatically credit external deposits/interest;
+the default conservative closure calendar covers 2026–2027. See docs/API.md.
+
+
 
 The initial IBKR-to-chart slice is implemented, with live bar updates and browser
 symbol/interval/history and regular/extended-hours controls. Chart foundations now
@@ -51,8 +125,10 @@ local `0.1.0.dev1` development snapshot are complete (checkpoint `f0f79a6`).
 Current milestone: algorithmic paper trading with persistent account performance
 and order tracking. Account observation, bounded AAPL strategy execution, explicit
 same-day restart/recovery, cancellation and selected-option lifecycle checks are
-validated. Settlement accounting, execution corrections, automatic broker reconnect,
-multi-session recovery and automated option strategies remain open.
+validated. Durable settlement accounting, explicit session rollover and selected-option
+automation now have offline and bounded TWS coverage. Actual next-date release,
+natural partial fills, execution corrections, automatic broker reconnect and full
+historical coverage remain open.
 See [the staged paper-trading plan](#24-phase-6--algorithmic-paper-trading-and-account-performance).
 The two worked scientific studies remain a subsequent milestone; their helpers
 already exist. Advanced analysis remains user-owned.
@@ -1201,7 +1277,9 @@ charting-platform backlog remains removed.
 The validated runner uses one selected paper account, USD reporting, one US equity
 and whole shares, long/flat. Selected long-option limit orders now reuse the shared
 broker lifecycle with resolved identity/multiplier and expiry restrictions; they
-do not yet have an automated strategy runner.
+now have an initial underlying-driven above/below-SMA runner with offline and
+bounded TWS buy/sell evidence. Actual next-date release and natural partial fills
+remain live acceptance gaps.
 Existing positions in any instrument must remain visible even when the first
 runner cannot trade them. Multi-leg options, shorting, margin strategies and live
 accounts require later scope. Do not liquidate pre-existing positions implicitly.
@@ -1244,19 +1322,20 @@ no-borrowing policy; support a margin policy separately if requested.
 - [x] P1: capture account type, total cash, settled cash, available funds and buying
   power distinctly, including currency, timestamps, source and missing-field status.
   Account value and total cash alone are not an executable spending budget.
-- [ ] P2: evaluate spendable funds before every new order or quantity/price increase.
-  Include estimated fees, price cushions and outstanding commitments; serialize
-  checks/reservations so concurrent signals cannot spend the same funds twice.
-- [ ] Track unreflected local commitments separately from broker-reflected debits
-  and holds, with reconciliation to avoid double subtraction. Partial fills reduce
+- [x] P2: evaluate spendable funds before each supported new limit buy, including
+  fee allowance and the submitted limit price; serialize checks/commitments.
+  Quantity/price amendments are unsupported and require separate scope.
+- [x] Track local commitments against an independent durable cash ceiling, capped
+  by fresh broker fields rather than subtracting holds from broker funds again. Partial fills reduce
   remaining reservations; pending cancellations retain the remaining hold until
   confirmed. Unknown send outcomes retain their commitments until resolved.
-- [ ] For the cash-only policy, exclude unsettled sale proceeds. Maintain dated,
+- [x] For the cash-only policy, exclude recorded unsettled sale proceeds. Maintain dated,
   currency-specific settlement obligations and reconcile with broker settled funds;
   never treat a sell fill or realized profit as immediately spendable by default.
   Any local estimate must not loosen broker restrictions. Unknown/stale funding
   data blocks new exposure, with a visible reason.
-- [ ] Version settlement rules by product, market and effective date. US stock/ETF
+- [x] Version local settlement rules by product, market and effective date; default
+  conservative US/USD STK/OPT T+1 with bounded 2026–2027 closure coverage. US stock/ETF
   regular-way settlement is generally T+1 business day; account for settlement
   holidays rather than adding 24 hours. Do not hardcode the same rule for options,
   FX or other markets. Formal clearing settlement and IBKR's displayed settled-cash
@@ -1269,9 +1348,10 @@ no-borrowing policy; support a margin policy separately if requested.
   local checks cannot guarantee acceptance or simulate all house restrictions.
 - [x] Show total, settled, unsettled and locally reserved cash plus usable strategy
   budget in the account report; label local estimates and incomplete coverage.
-- [ ] Test same-day sell/rebuy blocking under cash-only policy, unused settled-cash
+- [x] Offline tests cover same-day sell/rebuy blocking, unused settled-cash
   purchases, next-business-day release, holidays, fees, two simultaneous orders,
   partial fills, cancellation races, restart and missing/stale funding snapshots.
+- [ ] Validate the new settlement ledger and explicit session rollover against TWS.
 
 Funding references checked 2026-10-19:
 
@@ -1288,11 +1368,15 @@ debit balance does not turn it into a cash account. Broker `AccountType` can des
 legal structure rather than cash/margin financing, so it is not sufficient proof.
 `BuyingPower` is not universal order-specific approval. The first implementation
 uses broker fields and a stricter settled-cash/no-borrowing cap, serializes to one
-unresolved owned order, and refreshes funds before each submission. It does not
-reimplement IBKR settlement calendars. It validates the USD
+unresolved owned order, and refreshes funds before each submission. Its durable local
+funding ledger now applies a deliberately stricter
+versioned T+1 policy to US stock and selected-option sales; it does not claim to
+reimplement IBKR settlement availability. It validates the USD
 `SettledCashByDate` date:balance entries and selects today's balance from single-
 or multi-date schedules, blocking missing, malformed or ambiguous values. A full dated
-local settlement ledger and advanced margin policy remain plans.
+local settlement ledger is implemented with offline coverage. Advanced margin
+policy, verified external cash flows, actual next-date release and natural partial
+fills remain open.
 
 ## P1 — Account observation and durable performance history
 
@@ -1385,7 +1469,8 @@ A profitable run is not an acceptance condition.
 - [x] Selected long-option limit orders: exact contract/multiplier, fresh bid/ask,
   tick-valid limits and expiry-day refusal; bounded buy/sell and cancellation validated.
 - [ ] Validate natural option partial fills and implement additional lifecycle handling
-  only within explicit scope; automated option strategies remain separate.
+  only within explicit scope. The selected-option SMA runner is offline-tested;
+  broader option strategies remain separate.
 - [ ] Compare paper executions and costs with the same strategy's backtest under
   recorded assumptions; evaluate behavior across multiple sessions.
 
