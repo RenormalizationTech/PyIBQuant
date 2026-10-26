@@ -1,5 +1,9 @@
 # PyIBQuant
 
+[![Docs](https://github.com/RenormalizationTech/PyIBQuant/actions/workflows/docs.yml/badge.svg?branch=main)](https://renormalizationtech.github.io/PyIBQuant/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
 A Python toolkit for Interactive Brokers market data, reproducible research,
 backtesting and experimental paper trading. An optional Yahoo Finance preview
 provides daily US stock/ETF data without TWS.

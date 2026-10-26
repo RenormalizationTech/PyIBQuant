@@ -11,6 +11,11 @@ requires-python = ">=3.11"
 license = {file = "LICENSE"}
 dependencies = []
 
+[project.urls]
+Documentation = "https://renormalizationtech.github.io/PyIBQuant/"
+Source = "https://github.com/RenormalizationTech/PyIBQuant"
+Changelog = "https://github.com/RenormalizationTech/PyIBQuant/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 docs = ["mkdocs==1.6.1", "mkdocs-material==9.7.7"]
 dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14"]
