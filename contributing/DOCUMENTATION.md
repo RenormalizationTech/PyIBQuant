@@ -41,10 +41,12 @@ The **Documentation** workflow in `.github/workflows/docs.yml`:
 1. Builds on documentation/configuration pull requests and matching pushes to `main`.
 2. Installs only the package and documentation extra, then runs the strict build.
 3. Uploads the generated site as a `github-pages` artifact for inspection.
-4. Deploys only on a manual run on `main` with **publish** checked.
+4. Deploys after a successful build on pushes to `main` that change these paths,
+   or on a manual run on `main` with **publish** checked.
 
-Pushes and pull requests do not publish. A manual run with **publish** unchecked
-also only builds. Pull request jobs have read-only repository permissions; only
+Pull requests never publish. A manual run with **publish** unchecked only builds.
+Pushes that change only files outside `docs/`, `mkdocs.yml`, `pyproject.toml` and
+the workflow do not run it; use a manual run with **publish** to republish then. Pull request jobs have read-only repository permissions; only
 the deployment job receives Pages write and OIDC permissions. No personal access
 token or `gh-pages` branch is needed. These jobs build the Markdown site; they do
 not run the code examples or broker integration checks.
@@ -66,11 +68,9 @@ The configured target is
 It is the intended address, not a claim that the site is already published.
 Nothing in this preparation changes remote repository settings or deploys a site.
 
-The workflow is deliberately manual for publication while the website is being
-prepared. When automatic publication is wanted, update the deploy job's `if` to
-allow successful `push` events on `main` as well as the explicit manual publish
-case; retain the branch restriction and environment controls. Document that policy
-change here when enabling it.
+Automatic publication from `main` is enabled: the deploy job's `if` allows push
+events on `main` as well as the explicit manual publish case. Keep the branch
+restriction and the `github-pages` environment controls when changing it.
 
 ## Theme and layout
 
