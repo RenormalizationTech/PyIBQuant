@@ -12,7 +12,8 @@ These docs describe the implemented `0.1.0.dev1` snapshot, not planned features.
 | Install and run my first example | [Quick start](QUICKSTART.md) |
 | Download real daily prices without TWS | [Yahoo Finance data](YAHOO.md) |
 | Look up market data, bars, datasets, quotes or caching | [Core API reference](API.md) |
-| Start testing a strategy step by step | [Strategy lab](STRATEGY_LAB.md) |
+| Backtest built-in or custom strategies | [Backtesting guide](BACKTESTING.md) |
+| Validate a strategy step by step, through a paper run | [Strategy validation checklist](STRATEGY_LAB.md) |
 | Calculate signals, run studies or simulate a strategy | [Research and simulation API](RESEARCH.md) |
 | Inspect a paper account or understand runner/order arguments | [Paper trading API](PAPER_TRADING.md) |
 | Try features one at a time and diagnose failures | [Manual testing guide](MANUAL_TESTING.md) |

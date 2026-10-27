@@ -51,7 +51,7 @@ def main() -> None:
                              'examples/paper_aapl.json', 'examples/paper_preflight.py',
                              'examples/paper_cancel_check.py', 'examples/paper_option_strategy.py',
                              'mkdocs.yml', 'docs/stylesheets/extra.css', 'docs/STRATEGY_LAB.md',
-                             'CONTRIBUTING.md', 'contributing/DOCUMENTATION.md'):
+                             'docs/BACKTESTING.md', 'CONTRIBUTING.md', 'contributing/DOCUMENTATION.md'):
                 assert any(name.endswith('/' + required) for name in names), required
             assert not any('/charts/' in name or '/.venv/' in name or '/.git/' in name
                            or '/private/' in name or name.endswith(('.sqlite3', '.sqlite', '.pem'))

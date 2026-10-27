@@ -1,7 +1,12 @@
-# Strategy lab: from first experiment to paper trading
+# Strategy validation checklist: from first experiment to paper trading
 
-[Documentation home](README.md) · [Research API](RESEARCH.md) ·
-[Paper operating guide](WORKFLOWS.md)
+[Documentation home](README.md) · [Backtesting guide](BACKTESTING.md) ·
+[Research API](RESEARCH.md) · [Paper operating guide](WORKFLOWS.md)
+
+New to backtesting? Start with the [backtesting guide](BACKTESTING.md), which
+explains the built-in strategies, result files and custom rules. Use this
+checklist once you want to validate an idea carefully, from verified accounting
+through a held-out test to a bounded paper run.
 
 Work through these tasks in order. Each has a concrete output and a completion
 check. This is a software-testing sequence, not a recommended investment strategy.

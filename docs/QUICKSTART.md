@@ -203,6 +203,9 @@ fill at the next supplied open. Commission is USD per fill; 5 basis points is
 an ending position is not automatically sold. See the
 [research reference](RESEARCH.md) for required metadata and all cost arguments.
 
+To try the built-in strategies, compare them or write your own, continue with
+the [backtesting guide](BACKTESTING.md).
+
 Continue with the [manual checklist](MANUAL_TESTING.md) for quotes, collections,
 caching and read-only account checks, or the [API reference](API.md) to look up a
 particular method.

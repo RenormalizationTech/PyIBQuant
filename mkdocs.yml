@@ -33,7 +33,8 @@ nav:
       - Market data and datasets: API.md
       - Research and simulation: RESEARCH.md
       - Paper accounts and runners: PAPER_TRADING.md
-  - Strategy lab: STRATEGY_LAB.md
+  - Backtesting guide: BACKTESTING.md
+  - Strategy validation checklist: STRATEGY_LAB.md
   - Manual testing: MANUAL_TESTING.md
   - Paper operating guide: WORKFLOWS.md
 

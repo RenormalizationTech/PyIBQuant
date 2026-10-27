@@ -22,5 +22,7 @@ Development snapshot; no stable release is implied.
   equity/option runners and explicit cross-session recovery.
 - Add user guides, an offline walkthrough, Yahoo examples, a strategy lab and a
   searchable GitHub Pages documentation build with left-side navigation.
+- Add a backtesting guide and an intraday SPY range-reversion example with fixed
+  and scaled position rules.
 - Separate contributor instructions from user documentation and remove personal
   session narratives and actual run/check identities from current public files.

@@ -1,6 +1,7 @@
 # Research, backtesting and simulation API
 
-[Documentation home](README.md) · [Core API](API.md) · [Quick start](QUICKSTART.md)
+[Documentation home](README.md) · [Core API](API.md) · [Quick start](QUICKSTART.md) ·
+[Backtesting guide](BACKTESTING.md)
 
 - [Signals and calculations](#signals-and-calculations)
 - [Descriptive studies](#descriptive-studies)
@@ -210,7 +211,8 @@ A return of `0.02` is 2%; a drawdown of `-0.1` is a 10% loss from the running pe
 
 Import from `pyibquant.simulation`. Use it for multiple feeds sharing cash,
 variable quantities and custom callbacks. The fixed-size functions above are
-simpler when all you need is one long/flat target.
+simpler when all you need is one long/flat target; the
+[backtesting guide](BACKTESTING.md#7-write-your-own-strategy) compares the two.
 
 ### `Feed(dataset, finalized_through, expected_starts=None)`
 

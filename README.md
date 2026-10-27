@@ -42,7 +42,8 @@ fixtures; see the [Yahoo guide](docs/YAHOO.md) for the current limitations.
 - [Documentation home](docs/README.md): concepts and learning path
 - [Quick start](docs/QUICKSTART.md): offline examples and IBKR setup
 - [Yahoo Finance without TWS](docs/YAHOO.md): charts, Python downloads and exports
-- [Strategy lab](docs/STRATEGY_LAB.md): tasks from first backtest to bounded paper runs
+- [Backtesting guide](docs/BACKTESTING.md): built-in strategies, results and custom rules
+- [Strategy validation checklist](docs/STRATEGY_LAB.md): tasks from first backtest to bounded paper runs
 - [Core API](docs/API.md): arguments and examples for market data, datasets and quotes
 - [Research and simulation](docs/RESEARCH.md): indicators, backtests and custom callbacks
 - [Paper accounts and runners](docs/PAPER_TRADING.md): observation, execution and recovery APIs

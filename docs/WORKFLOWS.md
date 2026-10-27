@@ -1,7 +1,7 @@
 # Paper trading operating guide
 
 [Documentation home](README.md) · [Paper API reference](PAPER_TRADING.md) ·
-[Strategy lab](STRATEGY_LAB.md)
+[Strategy validation checklist](STRATEGY_LAB.md)
 
 Use this sequence to observe an account, run a bounded paper strategy and recover
 its exact saved identity. The API reference documents arguments; this page
